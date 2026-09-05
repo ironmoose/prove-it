@@ -1,0 +1,8 @@
+{
+  "name": "prove-it",
+  "owner": { "name": "Paul Parker" },
+  "metadata": { "description": "prove-it: a code review harness that proves every finding by reproduction before you fix it.", "version": "0.1.0" },
+  "plugins": [
+    { "name": "prove-it", "source": "./plugins/prove-it", "description": "Standalone review + verification harness: parallel reviewers, repro-proven findings, confirm-fix, and regression-test promotion. Reviews PRs, local diffs, and follow-ups." }
+  ]
+}
