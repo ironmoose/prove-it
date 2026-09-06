@@ -1,0 +1,868 @@
+#!/usr/bin/env bash
+# prove-it-gate: CLI for tracking code-review quality-gate findings/verifications.
+# Companion to gate-check.sh (the PreToolUse hook that reads the state this
+# CLI writes). Plain bash + jq only.
+#
+# A finding is not "verified" by flagging it, it is verified by an
+# executable repro that is run right now against the real code, and the
+# resulting verdict is bound to a SHA-256 digest of the file it concerns.
+# Confirmed requires the repro to currently FAIL (non-zero exit) against the
+# finding's file; Proven-safe requires it to currently PASS (zero exit) and
+# explicitly drops the finding without authorizing any edit; Inconclusive
+# requires a documented reason and leaves the finding blocked.
+#
+# A fix is not "done" because the repo's test suite is green: those tests
+# did not catch the defect in the first place. 'prove-it-gate confirm-fix <ID>'
+# re-runs the finding's own recorded repro and requires it to now exit ZERO,
+# closing the red-green loop that 'verify' opened. 'prove-it-gate close' refuses
+# while any Confirmed finding has no recorded fix_confirmed_at.
+#
+# CONCURRENCY CONTROL (fixed 2026-08-26): every read-modify-write of
+# gate-state.json / gate-verdicts.json in this file is now serialized by a
+# single flock on GATE_DIR/gate.lock (see acquire_lock/release_lock below).
+# One lock, not one per file, because the two files are mutually dependent
+# (a verdict references a finding that lives in gate-state.json) so locking
+# them separately would not stop an interleaving that spans both. Read-only
+# `status` takes a shared lock (excludes writers, allows concurrent
+# readers); `repro-dir` takes none (it only mkdir -p's a directory, no JSON
+# state involved, and mkdir -p is itself safe under concurrency). The lock
+# is acquired fresh for each read-modify-write span within a command and
+# released before anything slow (running a repro script), see `verify` and
+# `confirm-fix`, so a long-running repro never holds other invocations
+# (e.g. `status`) hostage. Every acquisition is a single, non-nested flock
+# call scoped to one cmd_* function; no code path takes the lock while
+# already holding it, so there is no self-deadlock. `flock` (util-linux) is
+# not universal, notably absent on stock macOS, so if it is not on PATH,
+# or the lock cannot be acquired within a bounded wait, this CLI warns to
+# stderr and proceeds WITHOUT the lock rather than hang: a rare unlocked
+# race is a better failure mode for an interactive tool than refusing to
+# run. gate-check.sh (the PreToolUse hook) has its own, separate bounded
+# shared-lock wait and degrades the same way, for the same reason, since it
+# must fail open unconditionally, see its header.
+#
+# Provenance: reproduced live on 2026-08-25, when two agents drove this gate
+# simultaneously against the same ~/.claude/prove-it/ state. This is the
+# same defect class as finding F4 from that night's review of
+# interview-mode: a concurrent read-modify-write with no lock, which lost
+# 90 of 200 updates in a harness and wiped one key entirely. The tool built
+# to enforce that review shipped with the bug the review found. Re-proven
+# here (2026-08-26) before the fix, with N concurrent `verify` calls: see
+# gate/README.md's Known limitations section for the repro pointer.
+
+set -uo pipefail
+
+GATE_DIR="$HOME/.claude/prove-it"
+STATE_FILE="$GATE_DIR/gate-state.json"
+VERDICTS_FILE="$GATE_DIR/gate-verdicts.json"
+HISTORY_DIR="$GATE_DIR/history"
+OVERRIDE_LOG="$GATE_DIR/override-log.txt"
+GATE_LOCK="$GATE_DIR/gate.lock"
+
+mkdir -p "$GATE_DIR"
+
+# argv used to execute a repro script; populated by resolve_repro_cmd.
+REPRO_RUN_CMD=()
+
+# --- locking (see header) ---------------------------------------------------
+LOCK_FD=9
+LOCK_WAIT_SECS=10
+HAVE_FLOCK=1
+if command -v flock >/dev/null 2>&1; then
+    eval "exec $LOCK_FD>>\"\$GATE_LOCK\"" 2>/dev/null || HAVE_FLOCK=0
+else
+    HAVE_FLOCK=0
+fi
+if [ "$HAVE_FLOCK" -eq 0 ]; then
+    echo "warning: flock not found on PATH (or $GATE_LOCK could not be opened); proceeding WITHOUT locking. Concurrent prove-it-gate invocations may lose updates -- see gate/README.md." >&2
+fi
+
+# Acquire the gate lock. mode: "exclusive" (default) or "shared". Bounded
+# wait, not indefinite: prove-it-gate is an interactive/agent-driven CLI, not a
+# hook, but it must still never hang forever on a stuck peer. On timeout (or
+# no flock available) this warns and returns 0 anyway, proceeding WITHOUT
+# the lock -- consistent with this tool's existing fail-soft error handling
+# elsewhere (e.g. resolve_repro_cmd), and because refusing to run at all
+# over a lock is a worse failure mode than a rare unlocked race.
+acquire_lock() {
+    [ "$HAVE_FLOCK" -eq 1 ] || return 0
+    local mode_flag="-x"
+    [ "${1:-exclusive}" = "shared" ] && mode_flag="-s"
+    if ! flock -w "$LOCK_WAIT_SECS" "$mode_flag" "$LOCK_FD"; then
+        echo "warning: could not acquire the gate lock within ${LOCK_WAIT_SECS}s (another prove-it-gate process may be holding it); proceeding WITHOUT the lock." >&2
+        return 0
+    fi
+}
+
+# Release the gate lock early, before doing something slow (running a
+# repro) that should not hold other invocations hostage. Safe to call even
+# if the lock was never acquired (no-op).
+release_lock() {
+    [ "$HAVE_FLOCK" -eq 1 ] || return 0
+    flock -u "$LOCK_FD" 2>/dev/null || true
+}
+
+now_iso() {
+    date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+gate_is_open() {
+    [ -f "$STATE_FILE" ] && [ "$(jq -r '.status // empty' "$STATE_FILE" 2>/dev/null)" = "findings-open" ]
+}
+
+# Resolve how to execute a repro, writing the argv into REPRO_RUN_CMD.
+# Returns non-zero (message on stderr) if the repro is neither executable nor
+# a recognized script type.
+resolve_repro_cmd() {
+    local path="$1"
+    REPRO_RUN_CMD=()
+    if [ -x "$path" ]; then
+        REPRO_RUN_CMD=("$path")
+    elif [[ "$path" == *.sh ]]; then
+        REPRO_RUN_CMD=(bash "$path")
+    elif [[ "$path" == *.py ]]; then
+        REPRO_RUN_CMD=(python3 "$path")
+    else
+        echo "error: repro must be executable, or have a .sh/.py extension so I know how to run it." >&2
+        return 1
+    fi
+    return 0
+}
+
+# Ids of Confirmed findings in the open gate that have no recorded
+# fix_confirmed_at. Prints a comma-separated list, empty if there are none.
+unconfirmed_fix_ids() {
+    [ -f "$STATE_FILE" ] || return 0
+    [ -f "$VERDICTS_FILE" ] || return 0
+    jq -r -n \
+        --slurpfile state "$STATE_FILE" \
+        --slurpfile verdicts "$VERDICTS_FILE" \
+        '
+        ($state[0].findings // []) as $findings
+        | ($verdicts[0].verdicts // []) as $vs
+        | [ $findings[].id as $fid
+            | select(
+                ([$vs[]
+                  | select(.id == $fid
+                           and .status == "Confirmed"
+                           and ((.fix_confirmed_at // "") == ""))] | length) > 0
+              )
+            | $fid
+          ]
+        | join(", ")
+        ' 2>/dev/null
+}
+
+# Ids of findings in the open gate that have NO Confirmed or Proven-safe
+# verdict at all (i.e. UNVERIFIED, or stuck at Inconclusive). This is the
+# same coverage rule gate-check.sh enforces on every edit; 'close' must
+# enforce it too, or it becomes a silent way to clear a gate the hook is
+# actively blocking on. Prints a comma-separated list, empty if none.
+unverified_finding_ids() {
+    [ -f "$STATE_FILE" ] || return 0
+    jq -r -n \
+        --slurpfile state "$STATE_FILE" \
+        --slurpfile verdicts "$([ -f "$VERDICTS_FILE" ] && echo "$VERDICTS_FILE" || echo /dev/null)" \
+        '
+        ($state[0].findings // []) as $findings
+        | (($verdicts[0].verdicts // [])) as $vs
+        | [ $findings[].id as $fid
+            | select(
+                ([$vs[]
+                  | select(.id == $fid
+                           and (.status == "Confirmed" or .status == "Proven-safe"))] | length) == 0
+              )
+            | $fid
+          ]
+        | join(", ")
+        ' 2>/dev/null
+}
+
+usage() {
+    cat <<'EOF'
+Usage:
+  prove-it-gate open --target <description> --finding <ID>:<FILE>:<SUMMARY> [--finding <ID>:<FILE>:<SUMMARY> ...]
+  prove-it-gate verify <ID> --repro <path> [--proven-safe | --inconclusive] [--reason <text>]
+  prove-it-gate confirm-fix <ID>
+  prove-it-gate repro-dir [ID]
+  prove-it-gate status
+  prove-it-gate close
+  prove-it-gate override --reason <text>
+EOF
+}
+
+cmd_open() {
+    local target=""
+    local -a finding_ids=()
+    local -a finding_files=()
+    local -a finding_summaries=()
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --target)
+                target="${2:-}"
+                shift 2
+                ;;
+            --finding)
+                local raw="${2:-}"
+                if [ -z "$raw" ]; then
+                    echo "error: --finding requires a value of the form ID:FILE:SUMMARY" >&2
+                    exit 1
+                fi
+                local id="${raw%%:*}"
+                local after_id="${raw#*:}"
+                if [ -z "$id" ] || [ "$after_id" = "$raw" ]; then
+                    echo "error: --finding value '$raw' must be of the form ID:FILE:SUMMARY (missing ID, or no ':' found)" >&2
+                    exit 1
+                fi
+                local file="${after_id%%:*}"
+                local summary="${after_id#*:}"
+                if [ -z "$file" ] || [ "$summary" = "$after_id" ]; then
+                    echo "error: --finding value '$raw' must be of the form ID:FILE:SUMMARY (missing FILE, or missing SUMMARY / second ':')" >&2
+                    exit 1
+                fi
+                local normalized_file
+                normalized_file="$(realpath -m "$file" 2>/dev/null || echo "$file")"
+                finding_ids+=("$id")
+                finding_files+=("$normalized_file")
+                finding_summaries+=("$summary")
+                shift 2
+                ;;
+            *)
+                echo "error: unrecognized argument '$1'" >&2
+                usage
+                exit 1
+                ;;
+        esac
+    done
+
+    if [ -z "$target" ]; then
+        echo "error: --target is required" >&2
+        exit 1
+    fi
+    if [ ${#finding_ids[@]} -eq 0 ]; then
+        echo "error: at least one --finding <ID>:<FILE>:<SUMMARY> is required" >&2
+        exit 1
+    fi
+
+    # Exclusive lock: "is a gate already open" (read) through the
+    # gate-state.json write and gate-verdicts.json removal (write) is one
+    # read-modify-write span and must not interleave with any other command.
+    acquire_lock exclusive
+
+    if gate_is_open; then
+        echo "error: a gate is already open (status: findings-open) in $STATE_FILE." >&2
+        echo "Close it first with 'prove-it-gate close' (or bypass with 'prove-it-gate override --reason \"...\"') before opening a new one." >&2
+        exit 1
+    fi
+
+    # Build findings JSON array from the parallel arrays.
+    local findings_json="[]"
+    local i
+    for i in "${!finding_ids[@]}"; do
+        findings_json="$(jq -c --arg id "${finding_ids[$i]}" --arg file "${finding_files[$i]}" --arg summary "${finding_summaries[$i]}" \
+            '. + [{"id": $id, "file": $file, "summary": $summary}]' <<< "$findings_json")"
+    done
+
+    local opened_at
+    opened_at="$(now_iso)"
+
+    jq -n --arg status "findings-open" \
+          --arg opened_at "$opened_at" \
+          --arg target "$target" \
+          --argjson findings "$findings_json" \
+          '{status: $status, opened_at: $opened_at, target: $target, findings: $findings}' \
+          > "$STATE_FILE.tmp" || { echo "error: failed to write gate-state.json" >&2; exit 1; }
+    mv "$STATE_FILE.tmp" "$STATE_FILE"
+
+    if [ -f "$VERDICTS_FILE" ]; then
+        rm -f "$VERDICTS_FILE"
+    fi
+
+    release_lock
+
+    echo "Gate opened for target: $target"
+    echo "Findings (${#finding_ids[@]}):"
+    for i in "${!finding_ids[@]}"; do
+        echo "  - ${finding_ids[$i]} [${finding_files[$i]}]: ${finding_summaries[$i]}"
+    done
+    echo "Edits are now BLOCKED until every finding has a recorded verification (Confirmed or Proven-safe via 'prove-it-gate verify')."
+}
+
+cmd_verify() {
+    if [ $# -lt 1 ]; then
+        echo "error: usage: prove-it-gate verify <ID> --repro <path> [--proven-safe | --inconclusive] [--reason <text>]" >&2
+        exit 1
+    fi
+
+    local id="$1"
+    shift
+
+    local repro=""
+    local mode="confirmed"   # confirmed | proven-safe | inconclusive
+    local mode_flag_count=0
+    local reason=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --repro)
+                repro="${2:-}"
+                shift 2
+                ;;
+            --proven-safe)
+                mode="proven-safe"
+                mode_flag_count=$((mode_flag_count + 1))
+                shift
+                ;;
+            --inconclusive)
+                mode="inconclusive"
+                mode_flag_count=$((mode_flag_count + 1))
+                shift
+                ;;
+            --reason)
+                reason="${2:-}"
+                shift 2
+                ;;
+            *)
+                echo "error: unrecognized argument '$1'" >&2
+                exit 1
+                ;;
+        esac
+    done
+
+    if [ "$mode_flag_count" -gt 1 ]; then
+        echo "error: --proven-safe and --inconclusive are mutually exclusive" >&2
+        exit 1
+    fi
+
+    # Exclusive lock around the gate-state.json reads below. Released again
+    # right after (before the possibly-slow repro run, and before either
+    # branch's own gate-verdicts.json read-modify-write, which re-acquires
+    # it) so a long-running repro never blocks other invocations.
+    acquire_lock exclusive
+
+    if ! gate_is_open; then
+        echo "error: no gate is currently open. There is nothing to verify against." >&2
+        exit 1
+    fi
+
+    local id_exists
+    id_exists="$(jq -r --arg id "$id" '[.findings[] | select(.id == $id)] | length' "$STATE_FILE")"
+    if [ "$id_exists" -eq 0 ]; then
+        echo "error: finding id '$id' is not present in the open gate's findings ($STATE_FILE)." >&2
+        exit 1
+    fi
+
+    local finding_file
+    finding_file="$(jq -r --arg id "$id" '[.findings[] | select(.id == $id)][0].file' "$STATE_FILE")"
+
+    release_lock
+
+    local verified_at
+    verified_at="$(now_iso)"
+
+    case "$mode" in
+        inconclusive)
+            local reason_trimmed
+            reason_trimmed="$(echo -n "$reason" | tr -d '[:space:]')"
+            if [ -z "$reason_trimmed" ]; then
+                echo "error: an inconclusive verification without a reason is not a verification. Provide --reason \"...\"." >&2
+                exit 1
+            fi
+
+            acquire_lock exclusive
+
+            [ -f "$VERDICTS_FILE" ] || echo '{"verdicts": []}' > "$VERDICTS_FILE"
+
+            jq --arg id "$id" --arg reason "$reason" --arg verified_at "$verified_at" \
+                '.verdicts = ([.verdicts[] | select(.id != $id)] + [{"id": $id, "status": "Inconclusive", "reason": $reason, "verified_at": $verified_at}])' \
+                "$VERDICTS_FILE" > "$VERDICTS_FILE.tmp" || { echo "error: failed to write gate-verdicts.json" >&2; exit 1; }
+            mv "$VERDICTS_FILE.tmp" "$VERDICTS_FILE"
+
+            release_lock
+
+            echo "Recorded Inconclusive for '$id': $reason"
+            echo "This finding remains BLOCKED, inconclusive does not clear it."
+            ;;
+
+        confirmed|proven-safe)
+            if [ -z "$repro" ]; then
+                echo "error: --repro <path> is required for verification (Confirmed/Proven-safe)." >&2
+                exit 1
+            fi
+
+            local repro_path
+            repro_path="$(realpath "$repro" 2>/dev/null)"
+            if [ -z "$repro_path" ] || [ ! -e "$repro_path" ]; then
+                echo "error: repro path '$repro' does not exist." >&2
+                exit 1
+            fi
+
+            resolve_repro_cmd "$repro_path" || exit 1
+
+            local output
+            output="$("${REPRO_RUN_CMD[@]}" 2>&1)"
+            local exit_code=$?
+
+            if [ "$mode" = "confirmed" ] && [ "$exit_code" -eq 0 ]; then
+                echo "error: a repro that exits zero does not demonstrate a defect. Confirmed requires the repro to fail against the current code." >&2
+                exit 1
+            fi
+            if [ "$mode" = "proven-safe" ] && [ "$exit_code" -ne 0 ]; then
+                echo "error: a repro that fails does not prove the code is safe. Proven-safe requires the repro to exit zero." >&2
+                exit 1
+            fi
+
+            if [ -z "$finding_file" ] || [ "$finding_file" = "null" ]; then
+                echo "error: finding '$id' has no recorded file to bind this verification to." >&2
+                exit 1
+            fi
+            if [ ! -f "$finding_file" ]; then
+                echo "error: cannot bind a verification to a file that doesn't exist: $finding_file" >&2
+                exit 1
+            fi
+
+            local file_digest
+            file_digest="$(sha256sum "$finding_file" | awk '{print $1}')"
+
+            local excerpt
+            excerpt="$(printf '%s\n' "$output" | head -n 20)"
+
+            local status_label="Confirmed"
+            [ "$mode" = "proven-safe" ] && status_label="Proven-safe"
+
+            acquire_lock exclusive
+
+            [ -f "$VERDICTS_FILE" ] || echo '{"verdicts": []}' > "$VERDICTS_FILE"
+
+            jq --arg id "$id" --arg status "$status_label" --arg file "$finding_file" \
+               --arg digest "$file_digest" --arg repro_path "$repro_path" \
+               --argjson exit_code "$exit_code" --arg excerpt "$excerpt" --arg verified_at "$verified_at" \
+                '.verdicts = ([.verdicts[] | select(.id != $id)] + [{"id": $id, "status": $status, "file": $file, "file_sha256": $digest, "repro_path": $repro_path, "exit_code": $exit_code, "output_excerpt": $excerpt, "verified_at": $verified_at}])' \
+                "$VERDICTS_FILE" > "$VERDICTS_FILE.tmp" || { echo "error: failed to write gate-verdicts.json" >&2; exit 1; }
+            mv "$VERDICTS_FILE.tmp" "$VERDICTS_FILE"
+
+            release_lock
+
+            if [ "$mode" = "proven-safe" ]; then
+                echo "Recorded Proven-safe for '$id' (repro exited 0 against $finding_file, digest $file_digest)."
+                echo "This DROPS the finding, it does NOT authorize edits to $finding_file. No fix is being made."
+            else
+                echo "Recorded Confirmed for '$id' (repro exited $exit_code against $finding_file, digest $file_digest)."
+                echo "Edits to $finding_file are authorized until it changes again (verification is bound to this exact file digest)."
+            fi
+            ;;
+    esac
+}
+
+cmd_confirm_fix() {
+    if [ $# -lt 1 ]; then
+        echo "error: usage: prove-it-gate confirm-fix <ID>" >&2
+        exit 1
+    fi
+
+    local id="$1"
+    shift
+    if [ $# -gt 0 ]; then
+        echo "error: unrecognized argument '$1' (confirm-fix takes only <ID>)" >&2
+        exit 1
+    fi
+
+    # Exclusive lock around the reads below (gate-state.json and
+    # gate-verdicts.json). Released before running the repro, which can be
+    # slow, then re-acquired around the final gate-verdicts.json
+    # read-modify-write further down.
+    acquire_lock exclusive
+
+    if ! gate_is_open; then
+        echo "error: no gate is currently open. There is no fix to confirm." >&2
+        exit 1
+    fi
+
+    local id_exists
+    id_exists="$(jq -r --arg id "$id" '[.findings[] | select(.id == $id)] | length' "$STATE_FILE")"
+    if [ "$id_exists" -eq 0 ]; then
+        echo "error: finding id '$id' is not present in the open gate's findings ($STATE_FILE)." >&2
+        exit 1
+    fi
+
+    if [ ! -f "$VERDICTS_FILE" ]; then
+        echo "error: finding '$id' has no recorded verification yet. Run 'prove-it-gate verify $id --repro <path>' first, because there is no repro to re-run." >&2
+        exit 1
+    fi
+
+    local status repro_path finding_file
+    status="$(jq -r --arg id "$id" '[.verdicts[] | select(.id == $id)][0].status // empty' "$VERDICTS_FILE")"
+    repro_path="$(jq -r --arg id "$id" '[.verdicts[] | select(.id == $id)][0].repro_path // empty' "$VERDICTS_FILE")"
+    finding_file="$(jq -r --arg id "$id" '[.verdicts[] | select(.id == $id)][0].file // empty' "$VERDICTS_FILE")"
+
+    if [ -z "$status" ]; then
+        echo "error: finding '$id' has no recorded verification yet. Run 'prove-it-gate verify $id --repro <path>' first, because there is no repro to re-run." >&2
+        exit 1
+    fi
+    if [ "$status" != "Confirmed" ]; then
+        echo "error: finding '$id' is $status, not Confirmed. Only a Confirmed finding has a fix to confirm (Proven-safe drops the finding without a fix; Inconclusive was never settled)." >&2
+        exit 1
+    fi
+
+    if [ -z "$repro_path" ]; then
+        echo "error: finding '$id' has no recorded repro_path to re-run. Re-verify it with 'prove-it-gate verify $id --repro <path>'." >&2
+        exit 1
+    fi
+    if [ ! -e "$repro_path" ]; then
+        echo "error: the repro recorded for '$id' no longer exists on disk: $repro_path" >&2
+        echo "A fix cannot be confirmed without the repro that proved the defect. Restore it, or re-verify with 'prove-it-gate verify $id --repro <path>'." >&2
+        exit 1
+    fi
+
+    if [ -z "$finding_file" ]; then
+        echo "error: finding '$id' has no recorded file to re-digest after the fix." >&2
+        exit 1
+    fi
+    if [ ! -f "$finding_file" ]; then
+        echo "error: cannot confirm a fix against a file that doesn't exist: $finding_file" >&2
+        exit 1
+    fi
+
+    release_lock
+
+    resolve_repro_cmd "$repro_path" || exit 1
+
+    echo "Re-running the repro recorded for '$id': $repro_path"
+
+    local output
+    output="$("${REPRO_RUN_CMD[@]}" 2>&1)"
+    local exit_code=$?
+
+    if [ "$exit_code" -ne 0 ]; then
+        echo "" >&2
+        echo "FIX NOT CONFIRMED for '$id': the repro still FAILS (exit $exit_code)." >&2
+        echo "The defect this finding describes is still reproducible, so whatever was changed is not a fix." >&2
+        echo "The repo's own test suite passing does not settle this: those tests did not catch the defect." >&2
+        echo "Send it back to the fix step, then run 'prove-it-gate confirm-fix $id' again." >&2
+        echo "" >&2
+        echo "  repro:  $repro_path" >&2
+        echo "  file:   $finding_file" >&2
+        echo "  exit:   $exit_code" >&2
+        echo "  output (first 20 lines):" >&2
+        printf '%s\n' "$output" | head -n 20 | sed 's/^/    /' >&2
+        echo "" >&2
+        echo "Nothing was recorded." >&2
+        exit 1
+    fi
+
+    local fix_digest confirmed_at
+    fix_digest="$(sha256sum "$finding_file" | awk '{print $1}')"
+    confirmed_at="$(now_iso)"
+
+    acquire_lock exclusive
+
+    jq --arg id "$id" --arg confirmed_at "$confirmed_at" \
+       --argjson fix_exit_code "$exit_code" --arg fix_digest "$fix_digest" \
+        '.verdicts = [.verdicts[]
+            | if .id == $id
+              then . + {"fix_confirmed_at": $confirmed_at,
+                        "fix_exit_code": $fix_exit_code,
+                        "fix_file_sha256": $fix_digest}
+              else . end]' \
+        "$VERDICTS_FILE" > "$VERDICTS_FILE.tmp" || { echo "error: failed to write gate-verdicts.json" >&2; exit 1; }
+    mv "$VERDICTS_FILE.tmp" "$VERDICTS_FILE"
+
+    release_lock
+
+    echo "FIX CONFIRMED for '$id': the repro that proved this defect now exits 0."
+    echo "  repro:           $repro_path"
+    echo "  file:            $finding_file"
+    echo "  post-fix digest: $fix_digest"
+    echo "  confirmed_at:    $confirmed_at"
+}
+
+cmd_repro_dir() {
+    if [ $# -gt 1 ]; then
+        echo "error: usage: prove-it-gate repro-dir [ID]" >&2
+        exit 1
+    fi
+
+    local repros_root="$GATE_DIR/repros"
+
+    if [ $# -eq 0 ]; then
+        mkdir -p "$repros_root" || { echo "error: failed to create $repros_root" >&2; exit 1; }
+        echo "$repros_root"
+        return 0
+    fi
+
+    local id="$1"
+    if [ -z "$id" ]; then
+        echo "error: repro-dir id must not be empty" >&2
+        exit 1
+    fi
+    case "$id" in
+        -*)
+            echo "error: repro-dir id '$id' must not start with '-'" >&2
+            exit 1
+            ;;
+    esac
+    if [ "$id" = "." ] || [ "$id" = ".." ]; then
+        echo "error: repro-dir id '$id' must not be '.' or '..'" >&2
+        exit 1
+    fi
+    if ! [[ "$id" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        echo "error: repro-dir id '$id' must contain only letters, digits, '.', '_', or '-'" >&2
+        exit 1
+    fi
+
+    local dir="$repros_root/$id"
+    mkdir -p "$dir" || { echo "error: failed to create $dir" >&2; exit 1; }
+    echo "$dir"
+}
+
+cmd_status() {
+    # Shared lock: read-only, but excludes writers so we never read
+    # gate-state.json / gate-verdicts.json mid another command's
+    # read-modify-write. Shared (not exclusive) so concurrent `status` calls
+    # don't block each other. Held for the rest of this fast, read-only
+    # command; released implicitly on process exit.
+    acquire_lock shared
+
+    if ! [ -f "$STATE_FILE" ] || [ "$(jq -r '.status // empty' "$STATE_FILE" 2>/dev/null)" != "findings-open" ]; then
+        echo "No gate open. Edits are unrestricted."
+        exit 0
+    fi
+
+    local target opened_at
+    target="$(jq -r '.target' "$STATE_FILE")"
+    opened_at="$(jq -r '.opened_at' "$STATE_FILE")"
+
+    echo "Gate OPEN"
+    echo "  target:    $target"
+    echo "  opened_at: $opened_at"
+    echo "  findings:"
+
+    local all_verified=1
+    local n
+    n="$(jq '.findings | length' "$STATE_FILE")"
+    local idx=0
+    while [ "$idx" -lt "$n" ]; do
+        local fid ffile fsummary
+        fid="$(jq -r ".findings[$idx].id" "$STATE_FILE")"
+        ffile="$(jq -r ".findings[$idx].file" "$STATE_FILE")"
+        fsummary="$(jq -r ".findings[$idx].summary" "$STATE_FILE")"
+
+        local status="" reason="" exit_code="" verified_at="" recorded_digest="" fix_confirmed_at="" fix_digest=""
+        if [ -f "$VERDICTS_FILE" ]; then
+            status="$(jq -r --arg id "$fid" '[.verdicts[] | select(.id == $id)][0].status // empty' "$VERDICTS_FILE")"
+            reason="$(jq -r --arg id "$fid" '[.verdicts[] | select(.id == $id)][0].reason // empty' "$VERDICTS_FILE")"
+            exit_code="$(jq -r --arg id "$fid" '[.verdicts[] | select(.id == $id)][0].exit_code // empty' "$VERDICTS_FILE")"
+            verified_at="$(jq -r --arg id "$fid" '[.verdicts[] | select(.id == $id)][0].verified_at // empty' "$VERDICTS_FILE")"
+            recorded_digest="$(jq -r --arg id "$fid" '[.verdicts[] | select(.id == $id)][0].file_sha256 // empty' "$VERDICTS_FILE")"
+            fix_confirmed_at="$(jq -r --arg id "$fid" '[.verdicts[] | select(.id == $id)][0].fix_confirmed_at // empty' "$VERDICTS_FILE")"
+            fix_digest="$(jq -r --arg id "$fid" '[.verdicts[] | select(.id == $id)][0].fix_file_sha256 // empty' "$VERDICTS_FILE")"
+        fi
+
+        case "$status" in
+            Confirmed)
+                local staleness
+                if [ -f "$ffile" ]; then
+                    local current_digest
+                    current_digest="$(sha256sum "$ffile" 2>/dev/null | awk '{print $1}')"
+                    if [ "$current_digest" = "$recorded_digest" ]; then
+                        staleness="[current]"
+                    elif [ -n "$fix_digest" ] && [ "$current_digest" = "$fix_digest" ]; then
+                        # A confirmed fix necessarily changes the file; matching
+                        # the post-fix digest means the file is exactly what the
+                        # fix confirmation ran against, not stale.
+                        staleness="[current as fixed]"
+                    else
+                        staleness="[STALE: file changed since verification, re-verify]"
+                    fi
+                else
+                    staleness="[STALE: file missing since verification, re-verify]"
+                fi
+                local fix_marker
+                if [ -n "$fix_confirmed_at" ]; then
+                    fix_marker="[FIX CONFIRMED $fix_confirmed_at]"
+                else
+                    fix_marker="[FIX NOT RE-VERIFIED]"
+                fi
+                echo "    - $fid [$ffile]: $fsummary -> Confirmed (exit $exit_code, verified $verified_at) $fix_marker $staleness"
+                ;;
+            Proven-safe)
+                echo "    - $fid [$ffile]: $fsummary -> Proven-safe (dropped, exit $exit_code, verified $verified_at)"
+                ;;
+            Inconclusive)
+                echo "    - $fid [$ffile]: $fsummary -> Inconclusive: $reason"
+                all_verified=0
+                ;;
+            *)
+                echo "    - $fid [$ffile]: $fsummary -> UNVERIFIED"
+                all_verified=0
+                ;;
+        esac
+        idx=$((idx + 1))
+    done
+
+    echo ""
+    if [ "$all_verified" -eq 1 ]; then
+        echo "Edits are ALLOWED (every finding has a Confirmed or Proven-safe verification)."
+    else
+        echo "Edits are BLOCKED (one or more findings are unverified or inconclusive)."
+    fi
+
+    local unconfirmed unverified
+    unconfirmed="$(unconfirmed_fix_ids)"
+    if [ -n "$unconfirmed" ]; then
+        echo "Close is BLOCKED (Confirmed findings whose fix was never re-verified: $unconfirmed). Run 'prove-it-gate confirm-fix <id>'."
+    fi
+    unverified="$(unverified_finding_ids)"
+    if [ -n "$unverified" ]; then
+        echo "Close is BLOCKED (findings with no Confirmed or Proven-safe verification: $unverified). Run 'prove-it-gate verify <id> --repro <path>'."
+    fi
+}
+
+cmd_close() {
+    # Exclusive lock for the whole close: the open-check, the
+    # unconfirmed-fix/unverified reads, and the archive move are all part
+    # of one read-modify-write span. Nothing slow happens in here, so the
+    # lock is held straight through rather than released and reacquired.
+    acquire_lock exclusive
+
+    if ! gate_is_open; then
+        echo "No gate open. Nothing to close." >&2
+        exit 1
+    fi
+
+    local unconfirmed
+    unconfirmed="$(unconfirmed_fix_ids)"
+    if [ -n "$unconfirmed" ]; then
+        echo "error: refusing to close. These Confirmed findings have no confirmed fix: $unconfirmed" >&2
+        echo "A Confirmed finding whose fix was never re-verified against its own repro is exactly the failure this gate exists to prevent: the repro proved the defect, the fix was written, and nobody ever re-ran the repro to prove the defect is gone. A green repo test suite does not settle it, because those tests did not catch the defect in the first place." >&2
+        echo "Run 'prove-it-gate confirm-fix <id>' for each id above (or 'prove-it-gate override --reason \"...\"' to bypass, which is logged)." >&2
+        exit 1
+    fi
+
+    # D1: 'close' must not be a silent way to clear a gate that still has
+    # findings with no Confirmed/Proven-safe verdict at all (UNVERIFIED, or
+    # stuck at Inconclusive). Before this check, unconfirmed_fix_ids() only
+    # ever looked for Confirmed-without-a-fix, so an entirely unverified
+    # gate was invisible to it and 'close' archived it with no log entry --
+    # even though 'open' itself prints "Edits are now BLOCKED until every
+    # finding has a recorded verification" and the hook is actively denying
+    # edits the whole time. The sanctioned way to clear a gate that still
+    # has unverified findings is 'prove-it-gate override --reason "..."', which
+    # is loud, logs to override-log.txt, and (since 2026-08-26) archives the
+    # bypassed state to history/ the same as a normal close -- so this does
+    # not remove any way to get unstuck, it just closes the silent one.
+    local unverified
+    unverified="$(unverified_finding_ids)"
+    if [ -n "$unverified" ]; then
+        echo "error: refusing to close. These findings have no Confirmed or Proven-safe verification: $unverified" >&2
+        echo "'open' blocks edits until every finding is verified; closing a gate with unverified findings still in it would silently clear that block without ever recording why. An Inconclusive verdict does not count either -- it was never settled." >&2
+        echo "Run 'prove-it-gate verify <id> --repro <path>' for each id above (or 'prove-it-gate override --reason \"...\"' to bypass, which is logged and archived)." >&2
+        exit 1
+    fi
+
+    local ts
+    ts="$(date -u +%Y%m%dT%H%M%SZ)"
+    local archive_dir="$HISTORY_DIR/$ts"
+    mkdir -p "$archive_dir"
+
+    mv "$STATE_FILE" "$archive_dir/gate-state.json"
+    if [ -f "$VERDICTS_FILE" ]; then
+        mv "$VERDICTS_FILE" "$archive_dir/gate-verdicts.json"
+    fi
+
+    release_lock
+
+    echo "Gate closed. Archived to: $archive_dir"
+}
+
+cmd_override() {
+    local reason=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --reason)
+                reason="${2:-}"
+                shift 2
+                ;;
+            *)
+                echo "error: unrecognized argument '$1'" >&2
+                exit 1
+                ;;
+        esac
+    done
+
+    if [ -z "$(echo -n "$reason" | tr -d '[:space:]')" ]; then
+        echo "error: --reason is required and must be non-empty" >&2
+        exit 1
+    fi
+
+    # Exclusive lock: the open-check, the archive move, and the log append
+    # are one read-modify-write span that must not interleave with any
+    # other command's.
+    acquire_lock exclusive
+
+    if ! gate_is_open; then
+        release_lock
+        echo "No gate open. Nothing to override."
+        exit 0
+    fi
+
+    # Archive the bypassed state to history/, the same as 'close' does, so
+    # which findings/verdicts were bypassed can be reconstructed later --
+    # the log line alone (timestamp + reason) never recorded that.
+    local ts_compact archive_dir
+    ts_compact="$(date -u +%Y%m%dT%H%M%SZ)"
+    archive_dir="$HISTORY_DIR/$ts_compact"
+    mkdir -p "$archive_dir"
+
+    mv "$STATE_FILE" "$archive_dir/gate-state.json"
+    if [ -f "$VERDICTS_FILE" ]; then
+        mv "$VERDICTS_FILE" "$archive_dir/gate-verdicts.json"
+    fi
+
+    release_lock
+
+    local ts
+    ts="$(now_iso)"
+    printf '%s | %s | archived to %s\n' "$ts" "$reason" "$archive_dir" >> "$OVERRIDE_LOG"
+
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    echo "!!  PROVE-IT GATE OVERRIDE: VERIFICATION BYPASSED                !!"
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    echo "!!  Time:   $ts"
+    echo "!!  Reason: $reason"
+    echo "!!"
+    echo "!!  The quality gate was cleared WITHOUT recording verifications for"
+    echo "!!  its findings. The bypassed findings/verdicts were archived to:"
+    echo "!!    $archive_dir"
+    echo "!!  This bypass is logged to:"
+    echo "!!    $OVERRIDE_LOG"
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+}
+
+main() {
+    if [ $# -eq 0 ]; then
+        usage
+        exit 1
+    fi
+
+    local cmd="$1"
+    shift
+
+    case "$cmd" in
+        open) cmd_open "$@" ;;
+        verify) cmd_verify "$@" ;;
+        confirm-fix) cmd_confirm_fix "$@" ;;
+        repro-dir) cmd_repro_dir "$@" ;;
+        status) cmd_status "$@" ;;
+        close) cmd_close "$@" ;;
+        override) cmd_override "$@" ;;
+        -h|--help|help) usage ;;
+        *)
+            echo "error: unknown subcommand '$cmd'" >&2
+            usage
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
