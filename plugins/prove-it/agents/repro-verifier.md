@@ -79,6 +79,16 @@ For each finding: form a concrete trigger, write `repro-NN-slug.<ext>` in the sc
 
 Only demonstrated results move a finding. When torn between PROVEN-SAFE and INCONCLUSIVE, choose INCONCLUSIVE.
 
+## Ground the expected value in a contract before CONFIRMED
+
+A repro proves the code's *behavior*; it does not prove that behavior is a *defect*. The gap between the two is the reviewer's expected value, and CONFIRMED is warranted only when that expected value traces to a **contract the code actually makes**: a README or docstring statement, a type signature, a declared pre/post-condition, an API schema, or an invariant the types assert. Before you mark a finding CONFIRMED:
+
+- **Name the contract the expected value comes from**, with its source (file:line of the doc, type, or schema). Your repro's assertion must encode *that* contract's expected value, not one you assumed.
+- **If the expected value is only the reviewer's assumption** and the code's actual behavior is defensible under its own stated contract, the finding is **PROVEN-SAFE** (the code does what its contract says) or, when the contract is genuinely silent or ambiguous on the point, **INCONCLUSIVE (contract-ambiguous)** with the ambiguity named. It is NOT CONFIRMED. Worked example: a `daysOverdue` documented as "whole days past due" returns 0 for a two-hour gap that crosses midnight; a repro asserting "the calendar day advanced" encodes an expectation the contract never made, so that is PROVEN-SAFE against the whole-days contract, not a confirmed bug.
+- **A behavior that reproduces but contradicts no contract is not a MUST-FIX.** Put it under Incidental as an observation, or return it INCONCLUSIVE (contract-ambiguous), so the "N of M real" count never inflates by counting a reproduced-but-contract-honoring behavior as a proven defect.
+
+This gate is what keeps the headline honest: every CONFIRMED finding is a behavior that both reproduces AND breaks a promise the code made. It does not apply to the repo's own gate commands (a red typecheck or a failing test is a defect regardless of contract).
+
 ## Confirm mode (the follow-up pass)
 
 The orchestrator re-spawns you in **confirm mode** after the fix step, with the Confirmed findings, each one's repro script path, and the fix diff inlined. The path you are given points into the durable scratch dir (it persists across sessions and reboots), so unlike verify mode, a repro that isn't where it should be is not an expected condition -- treat a missing repro as an anomaly worth surfacing, not routine housekeeping to quietly work around. Your job then is narrow and mechanical:
@@ -164,3 +174,4 @@ Mark systemic concerns as [GOVERNANCE] in your final output, the same way the ot
 - No application code, tests, or fixtures were modified; all writes stayed in the scratch dir.
 - The report was sent to the orchestrator via `SendMessage`, not written to a file and not left only in your final text.
 - No invented findings. PROVEN-SAFE is never used for "could not reproduce."
+- Every CONFIRMED finding's expected value traces to a named contract (a doc, type, schema, or invariant, with its file:line); a behavior that reproduced but contradicted no contract was NOT marked CONFIRMED, and was reported as Incidental or INCONCLUSIVE (contract-ambiguous) instead.

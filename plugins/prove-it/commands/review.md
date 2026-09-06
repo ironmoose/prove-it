@@ -16,7 +16,7 @@ There is no task tracker here. The review TARGET is one of three things, resolve
 1. Resolve target         (main: local diff | PR | path/commit range; base from REMOTE ref)
 2. Detect language + inject conventions (overlays + target repo CLAUDE.md)
 3. Gather stated intent    (PR title/body, commits, --goal, or inferred from diff)
-4. Review pass             (7 reviewers in parallel, read-only, findings via SendMessage)
+4. Review pass             (10 reviewers in parallel, read-only, findings via SendMessage)
 5. Consolidate + dedupe    (main: split defect-claims from nits)
 6. Verify mode             (prove-it:repro-verifier: CONFIRMED / PROVEN-SAFE / INCONCLUSIVE)
 7. Open the gate           (optional: prove-it-gate, if installed)
@@ -32,12 +32,15 @@ The reviewers you dispatch (all registered under this plugin):
 | `prove-it:code-smells-reviewer` | Design quality, maintainability | yes |
 | `prove-it:edge-case-qa` | Boundary conditions, error paths | yes |
 | `prove-it:test-reviewer` | Test quality | yes |
+| `prove-it:contract-reviewer` | Type/interface/schema contracts honored | yes |
+| `prove-it:security-reviewer` | Exploitable vulnerabilities, attack paths | yes |
 | `prove-it:acceptance-qa` | Stated intent met | no |
+| `prove-it:doc-vouching-reviewer` | Defects hidden behind vouching comments (justification gaps) | no |
 | `prove-it:self-containment-reviewer` | Leaked private/local context | no |
 | `prove-it:comment-claim-verifier` | Falsifiable claims in changed comments/docstrings | no |
 | `prove-it:repro-verifier` | Proves/refutes defect-claims by running them | no |
 
-**Spawn contract.** Reviewers are read-only and return findings to you via `SendMessage`. Pass a `name` to each reviewer you dispatch (so you can `SendMessage` it to retrieve a thin result), and say so in its prompt. Do not consolidate until every dispatched reviewer has returned a REAL result: a truncated or empty completion notification is not a result. Retrieve any thin one via `SendMessage` before consolidating. A reviewer whose findings were never read counts as a reviewer that never ran.
+**Spawn contract.** Reviewers are read-only and deliver their findings by calling `SendMessage({to: "main", ...})`; a lane's final assistant text has no return channel, so a lane that only ends its turn has delivered nothing. Pass a `name` to each reviewer you dispatch so you can address it, and in its prompt tell it to reply to `main` -- never to its own name (telling a lane to "send to <its-name>" makes it message itself). Background reviewers emit an idle notification when they finish: if a lane's report has not arrived by the time it idles, `SendMessage` it once to deliver its report to `main` before you consolidate. Do not consolidate until every dispatched reviewer has returned a REAL result: an idle or empty completion notification is not a result, and a reviewer whose findings were never read counts as a reviewer that never ran.
 
 ---
 
@@ -102,7 +105,7 @@ Detect the language of the changed code and pick the conventions overlay to inje
 | mixed | both of the above |
 | anything else | none; state "no overlay" in the spawn prompt |
 
-**Gets the overlay:** `code-reviewer`, `code-smells-reviewer`, `test-reviewer`, `edge-case-qa`. **Takes no overlay:** `acceptance-qa`, `self-containment-reviewer`, `comment-claim-verifier`, `repro-verifier` (they reason about intent, private-context leaks, or runtime behavior, not language conventions).
+**Gets the overlay:** `code-reviewer`, `code-smells-reviewer`, `test-reviewer`, `edge-case-qa`, `contract-reviewer`, `security-reviewer` (type contracts and injection/deserialization patterns are language-specific). **Takes no overlay:** `acceptance-qa`, `self-containment-reviewer`, `comment-claim-verifier`, `doc-vouching-reviewer`, `repro-verifier` (they reason about intent, private-context leaks, justification gaps, or runtime behavior, not language conventions).
 
 **Inject the target repo's own conventions too.** Read the target repo's root `CLAUDE.md`, plus the nearest nested `CLAUDE.md` above the changed files, if present. Inline them into `code-reviewer` (and any other reviewer whose lane they touch).
 
@@ -117,17 +120,17 @@ The `acceptance-qa` lane needs to know what this change was supposed to do. Gath
 3. For a local diff or a path/range: the commit messages in the range.
 4. **If none of the above pins down intent, infer it from the diff and say so plainly** in the `acceptance-qa` prompt and later to the user: "no stated intent was available; acceptance was checked against intent inferred from the diff." An inferred goal is weaker evidence than a stated one, and the user should know which they got.
 
-## Step 4: Review pass (dispatch the 7 reviewers in parallel)
+## Step 4: Review pass (dispatch the 10 reviewers in parallel)
 
-Dispatch all seven reviewers in a single message so they run concurrently. Into EACH reviewer's spawn prompt, inline:
+Dispatch all ten reviewers in a single message so they run concurrently. Into EACH reviewer's spawn prompt, inline:
 
 - The full captured diff (or this reviewer's chunk of it, for a split large diff), with renames/moves called out.
 - The complete current bodies of any functions the diff shows only partially through context-truncation, and the bodies of the callers of changed functions, so a reviewer never has to guess at code the diff clipped.
-- For the four language-sensitive reviewers: the conventions overlay path(s) from step 2, plus the target repo `CLAUDE.md`, plus the precedence rule.
+- For the six language-sensitive reviewers (`code-reviewer`, `code-smells-reviewer`, `test-reviewer`, `edge-case-qa`, `contract-reviewer`, `security-reviewer`): the conventions overlay path(s) from step 2, plus the target repo `CLAUDE.md`, plus the precedence rule.
 - For `acceptance-qa`: the stated (or inferred, so-labeled) intent from step 3.
 - `REPO_PATH`: the absolute path to the target repo. Reviewers may read additional files for surrounding context, but the diff is inlined so they do not have to reconstruct it.
 
-Each reviewer returns structured findings: `file:line`, severity, description, suggested fix. Wait for all seven to return real results (see the completion barrier in the Spawn contract above) before moving on.
+Each reviewer returns structured findings: `file:line`, severity, description, suggested fix. Wait for all ten to return real results (see the completion barrier in the Spawn contract above) before moving on.
 
 ## Step 5: Consolidate and split defect-claims from nits
 
@@ -136,7 +139,9 @@ Consolidate every reviewer's findings:
 - **Deduplicate by `file:line`.** When two reviewers flag the same location, keep the one with the higher severity and merge the descriptions.
 - **Split the set in two.** The **defect-claims** are the correctness and edge-case findings: anything asserting the code does the wrong thing, mishandles a boundary, or breaks a contract. These go to the repro-verifier in step 6. The **nits** are the low-severity findings (style, naming, minor design smells) that are not claims of incorrect behavior; these are not repro-verified and are presented as-is at the end.
 
-A `comment-claim-verifier` finding marked Contradicted, or one it flagged as settleable only by execution, belongs with the defect-claims: hand it to the repro-verifier.
+A `comment-claim-verifier` finding marked Contradicted, or one it flagged as settleable only by execution, belongs with the defect-claims: hand it to the repro-verifier. So do the runtime-consequence findings from the new lanes: a `security-reviewer` finding with a concrete attack path, a `contract-reviewer` finding with a real consumer impact, and a `doc-vouching-reviewer` finding whose uncovered consequence a consumer suffers. Their pure-hardening or no-consumer-yet findings stay as nits.
+
+When you seed each defect-claim to the repro-verifier, mark where its expected value comes from: a documented or typed contract (README, docstring, type signature, API schema, invariant) or only a reviewer's assumption, and pass the contract source when you have one. The repro-verifier grounds CONFIRMED in a contract (see its spec): a claim whose expected value is only a reviewer assumption, where the code's actual behavior is defensible under its own stated contract, comes back PROVEN-SAFE or INCONCLUSIVE (contract-ambiguous), not CONFIRMED. This is what keeps the "N of M real" headline from counting a reproduced-but-contract-honoring behavior as a proven defect.
 
 ## Step 6: Verify mode (prove or refute every defect-claim)
 
