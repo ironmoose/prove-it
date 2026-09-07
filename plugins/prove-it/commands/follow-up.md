@@ -37,7 +37,7 @@ A repro script that is missing under the durable dir is a real anomaly, not an e
 
 Run the repro-verifier in **confirm mode**. This is mandatory for every Confirmed finding, with no skip conditions: not for a one-line fix, not because the fix was obviously right, not because the suite is green.
 
-Spawn `prove-it:repro-verifier` in confirm mode with, for every Confirmed finding: the finding text, the path to its OWN repro script (from step 1), the author's fix diff touching that finding's file(s), and `REPO_PATH` inlined.
+Spawn `prove-it:repro-verifier` in confirm mode with, for every Confirmed finding: the finding text, the path to its OWN repro script (from step 1), the author's fix diff touching that finding's file(s), and `REPO_PATH` inlined. Spawn as a standard subagent (no `name`); its allowlist already includes the execution tools it needs.
 
 For each finding it does two things:
 
@@ -78,7 +78,7 @@ The repro that proved the finding is evidence, not a permanent guard: it lives i
 
 ### Spawn
 
-Spawn `prove-it:test-writer` in **promote mode** with, per in-scope finding: the finding text and its verify-mode/confirm-mode verdicts, the FULL CONTENTS of its repro script (paste the contents; test-writer has no access to the durable scratch dir), the fix diff touching that finding's file(s), and `REPO_PATH`.
+Spawn `prove-it:test-writer` in **promote mode** with, per in-scope finding: the finding text and its verify-mode/confirm-mode verdicts, the FULL CONTENTS of its repro script (paste the contents; test-writer has no access to the durable scratch dir), the fix diff touching that finding's file(s), and `REPO_PATH`. Spawn as a standard subagent (no `name`); its allowlist already includes the execution tools it needs.
 
 **The spawn prompt MUST include the literal token `MODE: PROMOTE`.** This is load-bearing: test-writer keys its promote-mode behavior on seeing that exact string. Without it, it falls through to its standard mode ("write tests for already-implemented code") and silently produces ordinary tests instead of a trigger-preserving regression test, with no error raised.
 

@@ -16,7 +16,7 @@ There is no task tracker here. The review TARGET is one of three things, resolve
 1. Resolve target         (main: local diff | PR | path/commit range; base from REMOTE ref)
 2. Detect language + inject conventions (overlays + target repo CLAUDE.md)
 3. Gather stated intent    (PR title/body, commits, --goal, or inferred from diff)
-4. Review pass             (10 reviewers in parallel, read-only, findings via SendMessage)
+4. Review pass             (10 reviewers in parallel, read-only standard subagents, findings via returned result)
 5. Consolidate + dedupe    (main: split defect-claims from nits)
 6. Verify mode             (prove-it:repro-verifier: CONFIRMED / PROVEN-SAFE / INCONCLUSIVE)
 7. Open the gate           (optional: prove-it-gate, if installed)
@@ -40,7 +40,7 @@ The reviewers you dispatch (all registered under this plugin):
 | `prove-it:comment-claim-verifier` | Falsifiable claims in changed comments/docstrings | no |
 | `prove-it:repro-verifier` | Proves/refutes defect-claims by running them | no |
 
-**Spawn contract.** Reviewers are read-only and deliver their findings by calling `SendMessage({to: "main", ...})`; a lane's final assistant text has no return channel, so a lane that only ends its turn has delivered nothing. Pass a `name` to each reviewer you dispatch so you can address it, and in its prompt tell it to reply to `main` -- never to its own name (telling a lane to "send to <its-name>" makes it message itself). Background reviewers emit an idle notification when they finish: if a lane's report has not arrived by the time it idles, `SendMessage` it once to deliver its report to `main` before you consolidate. Do not consolidate until every dispatched reviewer has returned a REAL result: an idle or empty completion notification is not a result, and a reviewer whose findings were never read counts as a reviewer that never ran.
+**Spawn contract.** Reviewers are read-only, and that guarantee is enforced by HOW they are spawned. Dispatch each reviewer as a standard subagent: call the Agent tool with its `subagent_type` and a distinct `description`, and do NOT pass a `name`. This is load-bearing. Passing a `name` turns the reviewer into an in-process teammate, which inherits the orchestrator's full toolset and silently bypasses the agent's read-only `tools:` allowlist, handing it Bash, Write, Edit, and more. An unnamed standard subagent has exactly the tools its definition declares, so a reviewer genuinely cannot run code or modify files. Never name a reviewer to make it "addressable"; the read-only guarantee depends on not naming it. Delivery: a standard subagent's final message is captured and returned to you when it finishes, so that returned result IS the report; a reviewer may also SendMessage to `main`, but you do not need it to and you cannot message an unnamed reviewer mid-flight. Wait for every dispatched reviewer to finish and read each returned result before consolidating. If a reviewer finishes without a usable report (an empty or truncated final message), re-spawn it fresh rather than proceeding; you cannot poke it to re-emit. Do not consolidate until every reviewer has returned a REAL result: an empty or truncated completion is not a result, and a reviewer whose findings were never read counts as a reviewer that never ran. Set a distinct `description` per reviewer so you can map each returned result back to its lane.
 
 ---
 
@@ -122,7 +122,7 @@ The `acceptance-qa` lane needs to know what this change was supposed to do. Gath
 
 ## Step 4: Review pass (dispatch the 10 reviewers in parallel)
 
-Dispatch all ten reviewers in a single message so they run concurrently. Into EACH reviewer's spawn prompt, inline:
+Dispatch all ten reviewers in a single message so they run concurrently. Spawn each as a standard subagent (its `subagent_type` plus a distinct `description`, and NO `name`), per the Spawn contract above: naming a reviewer makes it an in-process teammate that bypasses its read-only tool allowlist. Into EACH reviewer's spawn prompt, inline:
 
 - The full captured diff (or this reviewer's chunk of it, for a split large diff), with renames/moves called out.
 - The complete current bodies of any functions the diff shows only partially through context-truncation, and the bodies of the callers of changed functions, so a reviewer never has to guess at code the diff clipped.
@@ -152,7 +152,7 @@ Run the repro-verifier in **verify mode**, seeded with the defect-claims from st
 - If `prove-it-gate` is installed (detect once with `command -v prove-it-gate`; carry the result forward to step 7 and to the follow-up command): `prove-it-gate repro-dir <review-id>` prints and creates it.
 - If not installed: use the literal path `~/.claude/prove-it/repros/<review-id>/` and `mkdir -p` it directly. The durability comes from the path, not the CLI; it is the same directory the CLI would have printed, already outside the repo tree and already exempt from the edit-blocking hook.
 
-Spawn `prove-it:repro-verifier` with the defect-claims, the captured diff, `REPO_PATH`, and the resolved scratch-dir path inlined. It takes no conventions overlay: it judges runtime behavior. It is read-only toward application code; its only writable space is that scratch dir. It writes and runs one repro per defect-claim and returns a verdict for each:
+Spawn `prove-it:repro-verifier` with the defect-claims, the captured diff, `REPO_PATH`, and the resolved scratch-dir path inlined. Spawn it as a standard subagent as well (no `name`); its definition already allowlists Bash and Write, so a standard spawn gives it exactly the execution tools it needs while the read-only reviewers get none. It takes no conventions overlay: it judges runtime behavior. It is read-only toward application code; its only writable space is that scratch dir. It writes and runs one repro per defect-claim and returns a verdict for each:
 
 | Verdict | Meaning | Where it lands in step 8 |
 |---------|---------|--------------------------|
@@ -209,7 +209,7 @@ Tell the user the next step: fix the MUST-FIX findings (and any KEEP findings th
 - **Never write fixes.** This command reviews and proves; it does not edit application code. Fixing is the user's job, confirmation is `/prove-it:follow-up`'s.
 - **Resolve the base from the REMOTE ref.** `git merge-base origin/<base-ref> HEAD`, never a bare local branch name. A local base ref silently feeds reviewers a superset of the change.
 - **Inline context, not references.** Paste the diff, the clipped function bodies, the caller bodies, and the conventions into each reviewer's prompt. Reviewers have no tracker to fetch from.
-- **Consolidate only after the completion barrier.** Every dispatched reviewer must have returned a real result; retrieve thin ones via `SendMessage` first.
+- **Consolidate only after the completion barrier.** Every dispatched reviewer must have returned a real result; re-spawn any that finished with an empty or truncated report rather than proceeding without it.
 - **Verify mode is mandatory, every review, no skip conditions.** Not for a one-line diff, not when the gate came back clean, not for a docs-only change. An unproven finding is a guess.
 - **The repro dir is durable.** It lives under `~/.claude/prove-it/`, outside the target repo, so the follow-up pass in a later session finds the same scripts.
 - **Optional gate, mandatory discipline.** `prove-it-gate` absent means advisory-only, said plainly; it never means the verification is skipped.
