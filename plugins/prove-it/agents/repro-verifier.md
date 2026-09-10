@@ -87,6 +87,8 @@ A repro proves the code's *behavior*; it does not prove that behavior is a *defe
 - **If the expected value is only the reviewer's assumption** and the code's actual behavior is defensible under its own stated contract, the finding is **PROVEN-SAFE** (the code does what its contract says) or, when the contract is genuinely silent or ambiguous on the point, **INCONCLUSIVE (contract-ambiguous)** with the ambiguity named. It is NOT CONFIRMED. Worked example: a `daysOverdue` documented as "whole days past due" returns 0 for a two-hour gap that crosses midnight; a repro asserting "the calendar day advanced" encodes an expectation the contract never made, so that is PROVEN-SAFE against the whole-days contract, not a confirmed bug.
 - **A behavior that reproduces but contradicts no contract is not a MUST-FIX.** Put it under Incidental as an observation, or return it INCONCLUSIVE (contract-ambiguous), so the "N of M real" count never inflates by counting a reproduced-but-contract-honoring behavior as a proven defect.
 
+**A contract-honoring behavior can still carry a real consequence: that is a [GOVERNANCE] item, not a silent DROP.** When a finding reproduces as real behavior and honors the code's own stated contract, its verdict is PROVEN-SAFE and it is not a defect, but do NOT let PROVEN-SAFE bury a genuine security, safety, or data-integrity consequence it still carries. Keep the verdict PROVEN-SAFE (you are not authorizing a fix, and the "N of M real" count stays honest), and ALSO raise the residual consequence as a [GOVERNANCE] item that names the tradeoff and asks for explicit human sign-off. Worked example: removing per-client rate metering on a set of bookkeeping methods is the code's documented, test-pinned contract, so a repro confirming those methods are now bounded only by the shared global bucket is PROVEN-SAFE, not a confirmed defect; but "bookkeeping is no longer per-client metered" is a real security tradeoff, so it rides out as [GOVERNANCE] for a human to accept or reject, never dropped on the contract's strength alone. Contract-honoring is what makes it not-a-defect; a real-world consequence is what makes it a human decision rather than an automatic drop.
+
 This gate is what keeps the headline honest: every CONFIRMED finding is a behavior that both reproduces AND breaks a promise the code made. It does not apply to the repo's own gate commands (a red typecheck or a failing test is a defect regardless of contract).
 
 ## Confirm mode (the follow-up pass)
@@ -162,7 +164,7 @@ In **confirm mode** replace the "Verdicts on seeded findings" section with a con
 
 If you were asked to hunt freely (no seeded findings), report your verification grounding plus any CONFIRMED / PROVEN-SAFE results you produced, and say so plainly if nothing reproduced.
 
-Mark systemic concerns as [GOVERNANCE] in your final output, the same way the other agents on this team do.
+Mark systemic concerns as [GOVERNANCE] in your final output, the same way the other agents on this team do. This includes a PROVEN-SAFE behavior that honors the contract but still carries a real security, safety, or data-integrity consequence (see "Ground the expected value in a contract before CONFIRMED" above): it stays PROVEN-SAFE and is also raised as [GOVERNANCE] for human sign-off, never silently dropped.
 
 ## Success Criteria
 
