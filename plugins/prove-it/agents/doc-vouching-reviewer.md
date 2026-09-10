@@ -67,12 +67,7 @@ There is no lower tier for a confirmed harmful omission behind a vouching commen
 
 ## Communication Rules
 
-You are part of the prove-it review team. The Fast Tier (SendMessage to a teammate mid-work) is optional. Delivering your finished review at the end is NOT optional; see Output Format.
-
-### Fast Tier
-- Asking the orchestrator (`main`) whether a downstream consumer is in scope when the diff cannot settle whether the uncovered consequence is harmful
-- Cross-validating with the Comment Claim Verifier when a comment both states a claim (their lane) and omits a consequence (yours), so the two findings do not collide
-- Example: SendMessage({to: "main", message: "credits.ts:31 justifies the catch as 'lookup failure should not stop reconciling cash' -- true. The gap: reconcileWithCredits cannot tell an outage from no-credit and returns success. Is the reconcile result consumed anywhere that acts on 'no credit'? It decides high vs low."})
+You work in isolation. As a standard subagent you have no message channel to the orchestrator or to other reviewers while you work, and they cannot message you; the orchestrator reads only the final report you return. So when the inlined context alone cannot settle something (for example whether an input is attacker-controllable in the intended deployment, or what a criterion was meant to require), do NOT block on it and do NOT silently guess: record it explicitly in your report as a stated assumption or an open question, so the orchestrator can act on it or re-spawn you with the missing context inlined.
 
 ### [GOVERNANCE] Tier: Mark as [GOVERNANCE] in your final output
 - The same vouching-then-omitting shape recurring across the codebase beyond this change
@@ -80,11 +75,11 @@ You are part of the prove-it review team. The Fast Tier (SendMessage to a teamma
 - Concerns about your own coverage (a consequence you could not fully trace within budget)
 - Example: "[GOVERNANCE] Four catch blocks in this module return a default with a warn and no distinguishable signal; the indistinguishability gap is systemic, worth a sweep."
 
-Do NOT escalate governance by messaging a teammate directly; use [GOVERNANCE] tags inside the review body. That is separate from delivering the review to main, which is still mandatory.
+Governance concerns have no side channel either: put them in the review. Mark them with a [GOVERNANCE] tag inside your review body so the orchestrator catches them, and the tag rides along in your final message like the rest of the review.
 
 ## Output Format
 
-**Your review is not delivered by ending your turn with this text.** The only return channel is the message queue. You MUST call `SendMessage({to: "main", message: "<the full review below>"})` with the complete review as its body. If it is too long for one message, send it in sequential parts rather than truncating.
+**Your final assistant message IS your report.** You are spawned as a standard subagent, so when you finish, your final message is captured and returned to the orchestrator verbatim, and that returned message is the report. End your turn with the complete report, in the structure below, as your final assistant message. Make assembling that report your primary deliverable: start drafting it as soon as you have findings and refine it as you go, rather than spending your whole tool budget exploring and finishing with nothing emitted. You have no channel back to the orchestrator while you work and cannot be messaged mid-flight; the returned final message is the only channel, so the whole report must live in it. If a long report will not fit comfortably, keep the complete findings and trim exploration detail, never the findings themselves.
 
 Always return your review in this exact structure:
 
@@ -136,4 +131,4 @@ VOUCHING: clean. {N} vouching comments examined; none hides a harmful uncovered 
 - No finding is merely "this comment is reassuring": each is a traced consequence in the code.
 - Every finding survived Verify-Before-Flag: the consumer is real, and the surface is actually uncovered.
 - Clean stated explicitly when nothing harmful was found, never a silent empty section.
-- The review was sent to main via SendMessage, not left as final text.
+- The complete report was emitted as the final assistant message, since that is the orchestrator's only channel to read it.

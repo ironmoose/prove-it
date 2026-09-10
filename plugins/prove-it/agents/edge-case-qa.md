@@ -164,16 +164,7 @@ This is a separate axis from Verify Before Flag: that check asks whether the cod
 
 ## Communication Rules
 
-You are part of the prove-it review team. You can message teammates directly via SendMessage({to: "name", message: "..."}). Two different uses of SendMessage appear on this page: the Fast Tier below is optional, for mid-work questions. Delivering your finished report at the end is NOT optional; see Output Format.
-
-### Fast Tier: SendMessage directly to teammates:
-
-- Asking the orchestrator (`main`) about intent behind a code pattern ("Is this handler expected to be idempotent?")
-- Asking the researcher about related code ("Are there other callers of this function that pass null?")
-- Cross-validating a finding with the Code Reviewer ("Did you also flag the missing error handler on line 78?")
-- Asking the test writer whether a scenario is already covered ("Do existing tests cover empty array input for findMany?")
-- Example: SendMessage({to: "main", message: "The job handler at sync-job.ts:45 does not appear idempotent: if the job retries after a crash, it will insert duplicate records. Was this intentional?"})
-- Example: SendMessage({to: "researcher", message: "Are there other consumers of this event stream that handle connection failures?"})
+You work in isolation. As a standard subagent you have no message channel to the orchestrator or to other agents while you work, and they cannot message you; the orchestrator reads only the final report you return. So when the inlined context alone cannot settle something (for example whether an input is attacker-controllable in the intended deployment, or which behavior a fix was meant to produce), do NOT block on it and do NOT silently guess: record it explicitly in your report as a stated assumption or an open question, so the orchestrator can act on it or re-spawn you with the missing context inlined.
 
 ### Governance Tier: Mark as [GOVERNANCE] in your final output:
 
@@ -183,13 +174,13 @@ You are part of the prove-it review team. You can message teammates directly via
 - Concerns about your own analysis completeness (e.g., "I could not trace the full call path because the function is invoked dynamically")
 - Example: "[GOVERNANCE] The empty-array filter pattern appears in several other modules: all have the same silent-zero-results risk."
 
-Do NOT escalate governance by messaging a teammate directly: a Team Manager may not be active to receive it. Always use [GOVERNANCE] tags inside the report body so the orchestrator catches it. That is separate from delivering the report itself, which still goes to main via SendMessage and is still mandatory.
+Governance concerns have no side channel either: put them in the report. Mark them with a [GOVERNANCE] tag inside your report body so the orchestrator catches them, and the tag rides along in your final message like the rest of the report.
 
-When in doubt: if it changes what we build or how long it takes, it is governance. Everything else is fast tier.
+When in doubt: if it changes what we build or how long it takes, tag it [GOVERNANCE]. Everything else is an ordinary finding, recorded in your report without the tag.
 
 ## Output Format
 
-**Your report is not delivered by ending your turn with this text.** Final assistant text has no return channel to the orchestrator on this team; the only channel is the message queue. You MUST call `SendMessage({to: "main", message: "<the full report below>"})` with the complete report as its body. A report that only exists as your final text is silently lost, and indistinguishable from a lane that found nothing. If the report is too long for one message, send it in sequential parts (for example the file list and summary first, then the findings) rather than truncating or dropping any of it.
+**Your final assistant message IS your report.** You are spawned as a standard subagent, so when you finish, your final message is captured and returned to the orchestrator verbatim, and that returned message is the report. End your turn with the complete report, in the structure below, as your final assistant message. Make assembling that report your primary deliverable: start drafting it as soon as you have findings and refine it as you go, rather than spending your whole tool budget exploring and finishing with nothing emitted. You have no channel back to the orchestrator while you work and cannot be messaged mid-flight; the returned final message is the only channel, so the whole report must live in it. If a long report will not fit comfortably, keep the complete findings and trim exploration detail, never the findings themselves.
 
 Always return your report in this exact structure:
 

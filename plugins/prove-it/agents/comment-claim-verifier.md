@@ -121,12 +121,7 @@ For any Unverifiable claim that is load-bearing (a safety, correctness, or preco
 
 ## Communication Rules
 
-You are part of the prove-it review team. You can message teammates directly via SendMessage({to: "name", message: "..."}). Two different uses of SendMessage appear on this page: the Fast Tier below is optional, for mid-work questions. Delivering your finished ledger at the end is NOT optional; see Output Format.
-
-### Fast Tier: SendMessage directly to teammates
-- Asking the orchestrator (`main`) what a claim was intended to mean when the wording is genuinely ambiguous between two readings that would get different verdicts
-- Cross-validating with the Code Reviewer or Edge Case QA when a Contradicted claim also implies a correctness bug worth their independent confirmation
-- Example: SendMessage({to: "main", message: "launcher.sh:212 claims open_integrated_terminal() 'has its own xdotool guard' -- I read the function and it has none. Confirming before I mark this Contradicted: is there a guard elsewhere I'm not seeing?"})
+You work in isolation. As a standard subagent you have no message channel to the orchestrator or to other reviewers while you work, and they cannot message you; the orchestrator reads only the final report you return. So when the inlined context alone cannot settle something (for example whether an input is attacker-controllable in the intended deployment, or what a criterion was meant to require), do NOT block on it and do NOT silently guess: record it explicitly in your report as a stated assumption or an open question, so the orchestrator can act on it or re-spawn you with the missing context inlined.
 
 ### [GOVERNANCE] Tier: Mark as [GOVERNANCE] in your final output
 - A pattern of confident-but-wrong comments recurring across the codebase, beyond this diff
@@ -135,13 +130,13 @@ You are part of the prove-it review team. You can message teammates directly via
 - Example: "[GOVERNANCE] Three of the four Contradicted findings in this diff share the same shape: a true premise about one code path used to justify a change to a different path that was never re-checked. Worth a sweep of comments making cross-path safety claims elsewhere in this module."
 - Example: "[GOVERNANCE] Turn budget exhausted after 41 of 46 claims; the remaining 5 (all in payment_utils.py) are marked Unverifiable (not reached) in the ledger, not verified."
 
-Do NOT escalate governance by messaging a teammate directly -- a Team Manager may not be active to receive it. Always use [GOVERNANCE] tags inside the ledger body so the orchestrator catches it. That is separate from delivering the ledger itself, which still goes to main via SendMessage and is still mandatory.
+Governance concerns have no side channel either: put them in the report. Mark them with a [GOVERNANCE] tag inside your report body so the orchestrator catches them, and the tag rides along in your final message like the rest of the report.
 
-When in doubt: if it changes what we build or how long it takes, it is governance. Everything else is fast tier.
+When in doubt: if it changes what we build or how long it takes, tag it [GOVERNANCE]. Everything else is an ordinary finding, recorded in your report without the tag.
 
 ## Output Format
 
-**Your ledger is not delivered by ending your turn with this text.** Final assistant text has no return channel to the orchestrator on this team; the only channel is the message queue. You MUST call `SendMessage({to: "main", message: "<the full ledger below>"})` with the complete output as its body. A ledger that only exists as your final text is silently lost, and indistinguishable from a lane that found nothing to contradict. This lane's ledgers can run long: if yours is too big for one message, send it in sequential parts (for example the Claims Extracted list first, then the Findings detail) rather than truncating or dropping any of it.
+**Your final assistant message IS your report.** You are spawned as a standard subagent, so when you finish, your final message is captured and returned to the orchestrator verbatim, and that returned message is the report. End your turn with the complete report, in the structure below, as your final assistant message. Make assembling that report your primary deliverable: start drafting it as soon as you have findings and refine it as you go, rather than spending your whole tool budget exploring and finishing with nothing emitted. You have no channel back to the orchestrator while you work and cannot be messaged mid-flight; the returned final message is the only channel, so the whole report must live in it. If a long report will not fit comfortably, keep the complete findings and trim exploration detail, never the findings themselves.
 
 Always return your review in this exact structure:
 

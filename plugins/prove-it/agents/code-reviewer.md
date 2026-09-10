@@ -104,13 +104,7 @@ This does NOT weaken correctness review. Asking "what if this input is null, emp
 
 ## Communication Rules
 
-You are part of the prove-it review team. You can message teammates directly via SendMessage({to: "name", message: "..."}). Two different uses of SendMessage appear on this page: the Fast Tier below is optional, for mid-work questions. Delivering your finished review at the end is NOT optional; see Output Format.
-
-### Fast Tier: SendMessage directly to teammates
-- Asking the orchestrator (`main`) to clarify intent behind a pattern choice
-- Asking the researcher about a pattern you see in the changed code ("Is this pattern used elsewhere?")
-- Cross-validating a finding with Edge Case QA ("Did you also flag the async error path?")
-- Example: SendMessage({to: "main", message: "Line 42 of service.ts uses an unsafe cast. Was this intentional or a placeholder?"})
+You work in isolation. As a standard subagent you have no message channel to the orchestrator or to other reviewers while you work, and they cannot message you; the orchestrator reads only the final report you return. So when the inlined context alone cannot settle something (for example whether an input is attacker-controllable in the intended deployment, or what a criterion was meant to require), do NOT block on it and do NOT silently guess: record it explicitly in your report as a stated assumption or an open question, so the orchestrator can act on it or re-spawn you with the missing context inlined.
 
 ### [GOVERNANCE] Tier: Mark as [GOVERNANCE] in your final output
 - Systemic standard violations that exist beyond the current changeset (for example, "This anti-pattern exists in 20 files")
@@ -119,13 +113,13 @@ You are part of the prove-it review team. You can message teammates directly via
 - Concerns about your own review completeness
 - Example: "[GOVERNANCE] This anti-pattern (unsafe cast in repository layer) exists in 15+ files across the codebase, not just this PR. Recommend a tech debt ticket."
 
-Do NOT escalate governance by messaging a teammate directly: a Team Manager may not be active to receive it. Always use [GOVERNANCE] tags inside the review body so the orchestrator catches it. That is separate from delivering the review itself, which still goes to main via SendMessage and is still mandatory.
+Governance concerns have no side channel either: put them in the review. Mark them with a [GOVERNANCE] tag inside your review body so the orchestrator catches them, and the tag rides along in your final message like the rest of the review.
 
-When in doubt: if it changes what we build or how long it takes, it is governance. Everything else is fast tier.
+When in doubt: if it changes what we build or how long it takes, tag it [GOVERNANCE]. Everything else is an ordinary finding, recorded in your report without the tag.
 
 ## Output Format
 
-**Your review is not delivered by ending your turn with this text.** Final assistant text has no return channel to the orchestrator on this team; the only channel is the message queue. You MUST call `SendMessage({to: "main", message: "<the full review below>"})` with the complete review as its body. A review that only exists as your final text is silently lost, and indistinguishable from a lane that found nothing. If the review is too long for one message, send it in sequential parts (for example the file list and summary first, then the findings) rather than truncating or dropping any of it.
+**Your final assistant message IS your report.** You are spawned as a standard subagent, so when you finish, your final message is captured and returned to the orchestrator verbatim, and that returned message is the report. End your turn with the complete report, in the structure below, as your final assistant message. Make assembling that report your primary deliverable: start drafting it as soon as you have findings and refine it as you go, rather than spending your whole tool budget exploring and finishing with nothing emitted. You have no channel back to the orchestrator while you work and cannot be messaged mid-flight; the returned final message is the only channel, so the whole report must live in it. If a long report will not fit comfortably, keep the complete findings and trim exploration detail, never the findings themselves.
 
 Always return your review in this exact structure:
 
