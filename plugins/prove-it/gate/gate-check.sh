@@ -18,6 +18,16 @@
 # finding outright (no fix is being authorized) and are exempt from the
 # digest check.
 #
+# FILE-SCOPED BLOCKING: gate-state.json / gate-verdicts.json are MACHINE-WIDE
+# (no per-repo or per-session scoping), so the deny check below is scoped to
+# the file the pending edit actually targets. An edit is denied ONLY when
+# that specific file still has an unverified finding (or a Confirmed finding
+# whose file changed since verification, per the digest-binding check
+# further down). Editing any file the gate holds no open finding on is
+# allowed even while the gate is open overall, so one session's open gate
+# never freezes edits in an unrelated file, repo, worktree, or another
+# tool's concurrent session sharing this machine's state.
+#
 # LOCKING: reads of gate-state.json / gate-verdicts.json below take a SHARED
 # flock on the same GATE_DIR/gate.lock that prove-it-gate uses, so this hook
 # never reads the pair mid one of prove-it-gate's read-modify-write spans (e.g.
@@ -54,7 +64,7 @@ INPUT="$(cat)" || fail_open "could not read stdin."
 printf '%s' "$INPUT" | jq -e . >/dev/null 2>&1 || fail_open "stdin was not valid JSON."
 
 TOOL_NAME="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)" || fail_open "could not extract tool_name."
-FILE_PATH="$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)" || fail_open "could not extract file_path."
+FILE_PATH="$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // .tool_input.notebook_path // empty' 2>/dev/null)" || fail_open "could not extract file_path."
 
 # --- EXEMPT PATHS ------------------------------------------------------------
 GATE_DIR_EXPANDED="$HOME/.claude/prove-it"
@@ -89,40 +99,38 @@ fi
 STATUS="$(jq -r '.status // empty' "$STATE_FILE" 2>/dev/null)" || fail_open "could not parse gate-state.json."
 [ "$STATUS" = "findings-open" ] || exit 0
 
-# --- no verdicts file at all: nothing has been verified yet -----------------
-if [ ! -f "$VERDICTS_FILE" ]; then
-    FINDING_IDS="$(jq -r '[.findings[].id] | join(", ")' "$STATE_FILE" 2>/dev/null)"
-    [ -n "$FINDING_IDS" ] || FINDING_IDS="(unable to list finding ids)"
-    FINDING_COUNT="$(jq -r '(.findings // []) | length' "$STATE_FILE" 2>/dev/null)"
-    [ -n "$FINDING_COUNT" ] || FINDING_COUNT="?"
-    REASON="A quality gate is open with $FINDING_COUNT finding(s), none verified ($FINDING_IDS). No repro-verification has run yet (no gate-verdicts.json exists). Next step: run \`prove-it-gate verify <id> --repro <path>\` for each finding (add --proven-safe if the repro instead proves the code is safe, or --inconclusive --reason \"...\" if it cannot be determined)."
-    SYS_MSG="prove-it gate: blocking edits, findings are unverified ($FINDING_IDS). Run the repro-verifier and record verifications, or use \`prove-it-gate override --reason \"...\"\` to bypass."
-    jq -n --arg reason "$REASON" --arg sysmsg "$SYS_MSG" \
-        '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason}, systemMessage: $sysmsg}' \
-        2>/dev/null || fail_open "could not build deny JSON."
-    exit 0
-fi
+# --- file-scoped coverage check: every finding ON THIS FILE must have a  ---
+# --- Confirmed or Proven-safe verification entry (Inconclusive, or no    ---
+# --- entry at all, does NOT count). Findings on OTHER files never deny   ---
+# --- this edit -- see the FILE-SCOPED BLOCKING note in the file header.  ---
+# --- Cannot scope without a target file, so allow rather than guess.     ---
+[ -n "$FILE_PATH" ] || exit 0
 
-# --- coverage check: every finding id must have a Confirmed or Proven-safe --
-# --- verification entry (Inconclusive, or no entry at all, does NOT count) --
+TARGET_FILE="$(realpath -m "$FILE_PATH" 2>/dev/null || printf '%s' "$FILE_PATH")"
+
+# gate-verdicts.json may legitimately not exist yet (nothing verified so
+# far); jq errors on a --slurpfile of a missing path, which would otherwise
+# spuriously fail_open on every edit once the old "no verdicts file at all"
+# branch above is gone. Fall back to /dev/null (an empty slurp) instead.
 MISSING_IDS="$(jq -r -n \
     --slurpfile state "$STATE_FILE" \
-    --slurpfile verdicts "$VERDICTS_FILE" \
+    --slurpfile verdicts "$([ -f "$VERDICTS_FILE" ] && echo "$VERDICTS_FILE" || echo /dev/null)" \
+    --arg target "$TARGET_FILE" \
     '
     ($state[0].findings // []) as $findings
     | ($verdicts[0].verdicts // []) as $vs
-    | [ $findings[].id as $fid
+    | [ $findings[] | select(.file == $target) | .id as $fid
         | select(
             ([$vs[] | select(.id == $fid and (.status == "Confirmed" or .status == "Proven-safe"))] | length) == 0
           )
         | $fid
       ]
     | join(", ")
-    ' 2>/dev/null)" || fail_open "could not evaluate finding coverage."
+    ' 2>/dev/null)" || fail_open "could not evaluate finding coverage for this file."
 
 if [ -n "$MISSING_IDS" ]; then
-    REASON="A quality gate is open with findings that are not yet fully verified. Verification is missing or inconclusive for: $MISSING_IDS. Run \`prove-it-gate verify <id> --repro <path>\` for each (add --proven-safe if the repro proves the code is safe instead of confirming the defect)."
-    SYS_MSG="prove-it gate: blocking edits, unverified findings ($MISSING_IDS). Run \`prove-it-gate verify <id> --repro <path> [--proven-safe]\`, or use \`prove-it-gate override --reason \"...\"\` to bypass."
+    REASON="A quality gate is open with unverified finding(s) on this file ($TARGET_FILE): $MISSING_IDS. Run \`prove-it-gate verify <id> --repro <path>\` for each (add --proven-safe if the repro proves the code is safe instead of confirming the defect)."
+    SYS_MSG="prove-it gate: blocking edit to this file, unverified findings ($MISSING_IDS). Run \`prove-it-gate verify <id> --repro <path> [--proven-safe]\`, or use \`prove-it-gate override --reason \"...\"\` to bypass."
     jq -n --arg reason "$REASON" --arg sysmsg "$SYS_MSG" \
         '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason}, systemMessage: $sysmsg}' \
         2>/dev/null || fail_open "could not build deny JSON."
@@ -149,7 +157,7 @@ if [ -n "$FILE_PATH" ]; then
     fi
 
     STALE_IDS="$(jq -r -n \
-        --slurpfile verdicts "$VERDICTS_FILE" \
+        --slurpfile verdicts "$([ -f "$VERDICTS_FILE" ] && echo "$VERDICTS_FILE" || echo /dev/null)" \
         --arg target "$NORMALIZED_FILE_PATH" \
         --arg current "$CURRENT_DIGEST" \
         '[($verdicts[0].verdicts // [])[]
