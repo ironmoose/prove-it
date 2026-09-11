@@ -48,6 +48,16 @@ Before and around your repros, run the verification commands the target repo def
 - **Distrust catastrophic results.** If a check suddenly reports hundreds of errors, or every import unresolved, suspect your own invocation or a missing dependency sync before you report it. Re-run it the project's intended way and reconcile the two.
 - Record each command as PASS or FAIL with the one key line of output.
 
+### When the repo's test harness cannot run in a fresh worktree
+
+Some repos' test bootstrap loads the whole application (a DI graph, global fixtures, or a generated artifact a fresh worktree does not have), so the suite fails to start with errors like MODULE_NOT_FOUND on a generated file, not with a real test failure. Do NOT report that as a finding, and do NOT give up on the repro. Fall back to exercising the unit-under-test STANDALONE:
+
+- Import or invoke just the module under test directly, rather than through the repo's full test bootstrap.
+- Supply only the minimal environment that module needs (for example, initialize a DI/metadata dependency the module imports before importing the module itself; pin the compiler/runtime options to match the worktree's toolchain when they differ from the installed dependencies).
+- Still run the repo's own lint/typecheck (e.g. a native `tsc --noEmit`) for grounding, even when the full test runner is unusable.
+
+The specifics vary by stack (one real case needed a direct ts-node import by path, `reflect-metadata` imported first for a DI container, and `module: commonjs` because the worktree's compiler version differed from the symlinked dependencies). Treat those as an example, not the rule: the principle is "run the smallest faithful slice of the real code you can, and never let a whole-app test bootstrap that a worktree can't satisfy block the repro."
+
 ## Differentials: when the claim is "your change broke this"
 
 A finding shaped like "input X worked before this change and fails after" is NOT settled by testing before and after in the changed context alone. That answers *did behavior change* (usually yes) and not *is this failure new* (often no). Those are different questions and only the second one bears on whether the change is at fault.
@@ -88,6 +98,8 @@ A repro proves the code's *behavior*; it does not prove that behavior is a *defe
 - **A behavior that reproduces but contradicts no contract is not a MUST-FIX.** Put it under Incidental as an observation, or return it INCONCLUSIVE (contract-ambiguous), so the "N of M real" count never inflates by counting a reproduced-but-contract-honoring behavior as a proven defect.
 
 **A contract-honoring behavior can still carry a real consequence: that is a [GOVERNANCE] item, not a silent DROP.** When a finding reproduces as real behavior and honors the code's own stated contract, its verdict is PROVEN-SAFE and it is not a defect, but do NOT let PROVEN-SAFE bury a genuine security, safety, or data-integrity consequence it still carries. Keep the verdict PROVEN-SAFE (you are not authorizing a fix, and the "N of M real" count stays honest), and ALSO raise the residual consequence as a [GOVERNANCE] item that names the tradeoff and asks for explicit human sign-off. Worked example: removing per-client rate metering on a set of bookkeeping methods is the code's documented, test-pinned contract, so a repro confirming those methods are now bounded only by the shared global bucket is PROVEN-SAFE, not a confirmed defect; but "bookkeeping is no longer per-client metered" is a real security tradeoff, so it rides out as [GOVERNANCE] for a human to accept or reject, never dropped on the contract's strength alone. Contract-honoring is what makes it not-a-defect; a real-world consequence is what makes it a human decision rather than an automatic drop.
+
+**A claim that can only be settled by an external system is needs-external-verification, not a guess.** When a claim's truth depends on the behavior of a system you cannot exercise in the sandbox (an external API's validation of an unknown input, a third-party service's URL/redirect handling, how a separate frontend renders a stored value), do NOT force it to CONFIRMED or PROVEN-SAFE off a hunch. Mark it needs-external-verification and raise it as a [GOVERNANCE] item that names the SPECIFIC external question to answer (e.g. "does the Jira REST path reject an ADF mark of type X?"). Where the answer is reachable by tracing other code in the repo or its siblings, do that trace and resolve it; only a genuinely external, untraceable dependency stays parked. This is the same discipline as the contract rule above, applied to the local-vs-external boundary: reproduce what you can, and surface (not silently drop) what depends on a system outside your reach.
 
 This gate is what keeps the headline honest: every CONFIRMED finding is a behavior that both reproduces AND breaks a promise the code made. It does not apply to the repo's own gate commands (a red typecheck or a failing test is a defect regardless of contract).
 
