@@ -35,7 +35,12 @@ prove-it ships two baseline convention overlays that its language-sensitive revi
 - `reference/typescript-conventions.md` applies to `.ts` / `.tsx` files.
 - `reference/python-conventions.md` applies to `.py` files.
 
-Detect what the target repo uses:
+First, make sure the wizard is pointed at a single repo, not a workspace root:
+
+- Check whether the current directory is itself inside a git work tree with `git rev-parse --is-inside-work-tree 2>/dev/null`.
+- If it is NOT a work tree but the directory contains nested git repos (probe with `find . -maxdepth 2 -name .git -type d 2>/dev/null`), this is a workspace root, not a single target repo. Do NOT run per-repo language detection against the whole tree: the bounded `find` fallback below can be huge at a workspace root, and the results would mix unrelated repos. Instead, either tell the user to re-run the wizard from inside the specific target repo, or enumerate the nested repos you found and let them pick one to point the rest of setup at.
+
+Once you are inside a single repo, detect what it uses:
 
 1. From the current working directory, sample the repo's tracked files. A cheap probe:
    - `git ls-files '*.ts' '*.tsx' '*.py' 2>/dev/null | head -n 50` if this is a git repo, otherwise a bounded `find . -maxdepth 4 \( -name '*.ts' -o -name '*.tsx' -o -name '*.py' \)`.
@@ -53,7 +58,7 @@ Detect what the target repo uses:
    If only one language is present, report just that one. If neither is present, say so plainly: prove-it still reviews the change; it just has no baked language overlay for it, and falls back to the target repo's own conventions plus general good practice.
 
 3. State clearly that the target repo's own `CLAUDE.md` (if present) is authoritative and wins over these overlays. Check for one:
-   - `git rev-parse --show-toplevel` (or the cwd) plus the nearest nested `CLAUDE.md` relative to where work happens.
+   - Look in three places, because the authoritative `CLAUDE.md` for the target repo may not sit exactly where the wizard was run: the repo root (`git rev-parse --show-toplevel`, or the cwd if this is not a git repo), the nearest nested `CLAUDE.md` relative to where work happens, and one directory UP from the cwd (the target-repo `CLAUDE.md` sometimes lives one level above the directory you launched the wizard in).
    - If found, print: `This repo has a CLAUDE.md; its rules are authoritative and win over the shipped overlays.`
    - If not found, print: `No repo CLAUDE.md found. The shipped overlays plus general good practice will be the baseline.`
 
@@ -131,8 +136,9 @@ If **yes**, perform the install exactly as the gate's own README specifies (`gat
 
 **1. Install the scripts (idempotent):**
 - `GATE_DIR = ~/.claude/prove-it`. This is not a choice; both `prove-it-gate` and `gate-check.sh` hardcode it, so installing anywhere else would leave the scripts unable to find their own state.
-- Create `$GATE_DIR` if it does not exist, then copy `${CLAUDE_PLUGIN_ROOT}/gate/prove-it-gate` and `${CLAUDE_PLUGIN_ROOT}/gate/gate-check.sh` into it. Overwrite existing copies so re-running setup picks up a plugin-version update, but do NOT touch any runtime state that already lives alongside them (`gate-state.json`, `gate-verdicts.json`, `history/`, `override-log.txt`, `repros/`).
+- Create `$GATE_DIR` if it does not exist, then copy `${CLAUDE_PLUGIN_ROOT}/gate/prove-it-gate` and `${CLAUDE_PLUGIN_ROOT}/gate/gate-check.sh` into it. For each script: if a deployed copy does NOT already exist, or is byte-identical to the plugin's copy, copy it in without prompting. If a deployed copy DOES exist and DIFFERS from the plugin's copy (`diff "$GATE_DIR/<script>" "${CLAUDE_PLUGIN_ROOT}/gate/<script>"`), show the diff and ask the user to confirm before overwriting, so a local modification to a deployed script is never silently clobbered by a plugin-version update. Do NOT touch any runtime state that already lives alongside them (`gate-state.json`, `gate-verdicts.json`, `history/`, `override-log.txt`, `repros/`).
 - `chmod +x` both copied files.
+- Stamp the deployed version so `prove-it-gate version` can report it: read the plugin's version from `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` (`jq -r .version "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json"`, or a `grep`/`sed` fallback if `jq` is absent) and write it to `$GATE_DIR/VERSION`.
 
 **2. Put `prove-it-gate` on PATH:**
 - Symlink `~/.local/bin/prove-it-gate` to `$GATE_DIR/prove-it-gate`, creating `~/.local/bin` if it does not exist.
@@ -158,6 +164,7 @@ Then print:
 ```
 Quality-gate hook installed at: ~/.claude/settings.json
 prove-it-gate CLI: ~/.local/bin/prove-it-gate (or ~/.claude/prove-it/prove-it-gate directly)
+Deployed gate version: <version>   (check anytime with: prove-it-gate version)
 Read gate/README.md (in the plugin source) for the open / verify / confirm-fix / close cycle.
 Override a block anytime with: prove-it-gate override --reason "..."
 ```

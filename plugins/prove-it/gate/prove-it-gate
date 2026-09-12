@@ -57,6 +57,7 @@ VERDICTS_FILE="$GATE_DIR/gate-verdicts.json"
 HISTORY_DIR="$GATE_DIR/history"
 OVERRIDE_LOG="$GATE_DIR/override-log.txt"
 GATE_LOCK="$GATE_DIR/gate.lock"
+VERSION_FILE="$GATE_DIR/VERSION"
 
 mkdir -p "$GATE_DIR"
 
@@ -187,6 +188,7 @@ Usage:
   prove-it-gate status
   prove-it-gate close
   prove-it-gate override --reason <text>
+  prove-it-gate version
 EOF
 }
 
@@ -775,6 +777,14 @@ cmd_close() {
     echo "Gate closed. Archived to: $archive_dir"
 }
 
+cmd_version() {
+    if [ -f "$VERSION_FILE" ]; then
+        cat "$VERSION_FILE"
+    else
+        echo "unknown (deployed before version stamping; re-run /prove-it:setup to stamp)"
+    fi
+}
+
 cmd_override() {
     local reason=""
     while [ $# -gt 0 ]; do
@@ -856,6 +866,7 @@ main() {
         status) cmd_status "$@" ;;
         close) cmd_close "$@" ;;
         override) cmd_override "$@" ;;
+        version|--version|-V) cmd_version ;;
         -h|--help|help) usage ;;
         *)
             echo "error: unknown subcommand '$cmd'" >&2
