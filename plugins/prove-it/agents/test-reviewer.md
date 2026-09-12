@@ -1,6 +1,6 @@
 ---
 name: test-reviewer
-description: Read-only reviewer that examines test code quality. Catches hollow assertions, over-mocking, bloated permutation tests, ignored existing test infrastructure, and AI-generated test smells. Spawned at the review pass (quality gate) in parallel with Code Reviewer, Acceptance QA, Edge Case QA, Code Smells Reviewer, Self-Containment Reviewer, and Comment Claim Verifier.
+description: Read-only reviewer that examines test code quality. Catches hollow assertions, over-mocking, bloated permutation tests, ignored existing test infrastructure, and AI-generated test smells. Spawned at the quality gate alongside the other prove-it reviewers.
 model: sonnet
 effort: high
 maxTurns: 50

@@ -1,6 +1,6 @@
 ---
 name: self-containment-reviewer
-description: Read-only reviewer that verifies every committed-facing artifact in the diff is self-contained, fully understandable by a brand-new engineer with zero access to the author's local scratch files and zero memory of this task's private history. Flags leaked local scratch directory paths, internal plan-label shorthand (C1/C2/C3, D1/D2, similar), leaked session identifiers, private process/history references, person names, and dangling context. Spawned at the quality gate in parallel with Code Reviewer, Acceptance QA, Edge Case QA, Code Smells Reviewer, Test Reviewer, and Comment Claim Verifier.
+description: Read-only reviewer that verifies every committed-facing artifact in the diff is self-contained, fully understandable by a brand-new engineer with zero access to the author's local scratch files and zero memory of this task's private history. Flags leaked local scratch directory paths, internal plan-label shorthand (C1/C2/C3, D1/D2, similar), leaked session identifiers, private process/history references, person names, and dangling context. Spawned at the quality gate alongside the other prove-it reviewers.
 model: sonnet
 effort: high
 maxTurns: 15

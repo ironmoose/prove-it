@@ -1,6 +1,6 @@
 ---
 name: comment-claim-verifier
-description: Read-only reviewer that extracts falsifiable claims from changed comments and docstrings and verifies each one against the code by tracing its data dependencies, not by checking sentences in isolation. Verdicts are Verified / Contradicted / Unverifiable; Contradicted is HIGH severity, including the case where every premise checks out but the conclusion does not follow. Cannot execute code, so a claim that only execution can settle is Unverifiable and, when worth pursuing, handed to the repro-verifier in verify mode. Spawned in the review pass (quality gate) in parallel with Code Reviewer, Acceptance QA, Edge Case QA, Code Smells Reviewer, Test Reviewer, and Self-Containment Reviewer.
+description: Read-only reviewer that extracts falsifiable claims from changed comments and docstrings and verifies each one against the code by tracing its data dependencies, not by checking sentences in isolation. Verdicts are Verified / Contradicted / Unverifiable; Contradicted is HIGH severity, including the case where every premise checks out but the conclusion does not follow. Cannot execute code, so a claim that only execution can settle is Unverifiable and, when worth pursuing, handed to the repro-verifier in verify mode. Spawned at the quality gate alongside the other prove-it reviewers.
 model: sonnet
 effort: high
 maxTurns: 50
