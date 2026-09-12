@@ -198,6 +198,8 @@ Then present four buckets:
 
 **NITS** (low severity, not repro-verified). The style/naming/minor findings from step 5, presented as-is and clearly marked as not proven by execution.
 
+**Draft each finding to carry the answer, not homework.** Before you render a finding for the author (in the terminal or as a posted PR comment), resolve any question it would otherwise hand back to them. If the finding hinges on behavior elsewhere in the repo ("or confirm the frontend escapes this", "verify the caller validates X"), trace that behavior yourself first: you have full repo access here, unlike the sandboxed repro-verifier, so establish the conclusion and state it in the finding. Only a question that genuinely depends on a system you cannot inspect stays open, and it ships as a named needs-external-verification / [GOVERNANCE] item stating the specific external question, never as an open "please verify" addressed to the author.
+
 ## Step 9: Hand off
 
 Tell the user the next step: fix the MUST-FIX findings (and any KEEP findings they judge real), then run `/prove-it:follow-up` to confirm each fix against its own repro and promote the repros into permanent regression tests. Note whether the gate is enforcing (installed and open) or advisory-only. If you checked out a PR branch or changed the working branch in step 1, restore the original branch before finishing.
@@ -214,6 +216,7 @@ Tell the user the next step: fix the MUST-FIX findings (and any KEEP findings th
 - **The repro dir is durable.** It lives under `~/.claude/prove-it/`, outside the target repo, so the follow-up pass in a later session finds the same scripts.
 - **Optional gate, mandatory discipline.** `prove-it-gate` absent means advisory-only, said plainly; it never means the verification is skipped.
 - **No em dashes** in any user-facing text.
+- **Comments carry the answer, not homework.** A finding rendered for the author never asks them to verify something you could establish by reading the repo. Trace in-repo dependencies and state the conclusion; surface only a genuinely external question, and that as a named needs-external-verification / [GOVERNANCE] item, not an open ask to the author.
 
 ## Style
 
