@@ -1,6 +1,6 @@
 {
   "name": "prove-it",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "A standalone code review + verification harness for Claude Code. A finding is not real until a script reproduces it: parallel reviewers, repro-proven findings, confirm-fix, and regression-test promotion. Reviews PRs, local diffs, and follow-ups.",
   "author": { "name": "Paul Parker" },
   "repository": "https://github.com/ironmoose/prove-it",
