@@ -198,7 +198,7 @@ Lead with the count that matters, before the buckets:
 
 > **N of M findings were real.** M defect-claims were raised across the review pass; N reproduced against the actual code. (K proven safe and dropped, L inconclusive.)
 
-**Report the cost.** Every reviewer and repro-verifier pod returns a `subagent_tokens` count in its completion. Sum them across every pod the review spawned, add the orchestrator's own usage when you have it, and present a one-line cost footer alongside the headline, for example: "Cost: ~X tokens across N pods (~$Y)." Split the token total by model when you can (the Sonnet reviewer pods versus the orchestrator), since their per-token prices differ. Give the dollar figure only when you know current per-model pricing, label it approximate, and never hardcode a rate you are unsure of: report the token totals alone if you cannot price them confidently. The point is to make the review's real resource cost visible, not to assert a precise invoice.
+**Report the cost, when the data is available.** If a per-pod token count is available in each completion (for example a `subagent_tokens` field), sum it across every pod the review spawned, add the orchestrator's own usage when you have it, and present a one-line cost footer alongside the headline, for example: "Cost: ~X tokens across N pods (~$Y)." If no such count is available in the completions, omit the token/cost footer rather than estimate one. Split the token total by model when you can (the Sonnet reviewer pods versus the orchestrator), since their per-token prices differ. Give the dollar figure only when you know current per-model pricing, label it approximate, and never hardcode a rate you are unsure of: report the token totals alone if you cannot price them confidently. The point is to make the review's real resource cost visible when it can be shown honestly, not to assert a precise invoice.
 
 Then present four buckets:
 
@@ -211,6 +211,15 @@ Then present four buckets:
 **NITS** (low severity, not repro-verified). The style/naming/minor findings from step 5, presented as-is and clearly marked as not proven by execution.
 
 **Draft each finding to carry the answer, not homework.** Before you render a finding for the author (in the terminal or as a posted PR comment), resolve any question it would otherwise hand back to them. If the finding hinges on behavior elsewhere in the repo ("or confirm the frontend escapes this", "verify the caller validates X"), trace that behavior yourself first: you have full repo access here, unlike the sandboxed repro-verifier, so establish the conclusion and state it in the finding. Only a question that genuinely depends on a system you cannot inspect stays open, and it ships as a named needs-external-verification / [GOVERNANCE] item stating the specific external question, never as an open "please verify" addressed to the author.
+
+**Format each posted comment to the user's configured style.** Before formatting any comment for posting, read `~/.claude/prove-it/config.json` for a `comment_style` block. If the file is missing or malformed, fail open: proceed as if `template` were `what-fix-why`. `comment_style.template` selects the shape:
+
+- `what-fix-why` (default): `<prefix>: <one scope line>`, then `what:`, `fix:`, and `why:` lines. `<prefix>` is exactly one of `must` / `should` / `nit` / `opinion` / `idea` / `question` / `praise`, chosen for the finding's real weight, not lifted verbatim from a static reviewer's severity label. Keep each line a short, plain sentence; no summary paragraph on top and no restated diff.
+- `one-liner`: a single `<prefix>: <message>` line, same prefix set as above, no what/fix/why breakdown. Use it when the config asks for terseness over structure.
+- `detailed`: what/fix/why like the default, plus room to cite the evidence (the reproducing input and failing output) and any references (a contract source, a CVE, a style guide section) that back the finding.
+- `custom`: follow `comment_style.custom_body` verbatim as the template; do not blend it with any of the built-in shapes above.
+
+This governs formatting only, not content: the self-containment bar below still applies under every template, so a `what-fix-why` or `custom` comment still strips scratch-dir paths and inlines the reproducing input rather than pointing at a repro file.
 
 **A posted comment is self-contained; a scratch path is not.** The repro script lives under `~/.claude/prove-it/repros/<review-id>/` on your machine, so citing it by path or filename ("repro in dc2.ts") is useful in your local terminal but meaningless in a comment posted to the PR: the author cannot open your scratch dir. When a finding is posted (rather than shown locally), it must pass the same self-containment bar the diff does: strip the scratch-dir path and repro filename, and inline the minimal reproducing INPUT along with the failing output, so any reader can rerun it with no access to your machine.
 
