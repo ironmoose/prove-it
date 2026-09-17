@@ -38,9 +38,3 @@ prove-it ships baseline TypeScript and Python conventions overlays that its revi
 ## Why a green test suite is not proof
 
 A green suite tells you the tests you already had still pass. It does not tell you the bug a reviewer just described is gone, because if that suite covered the bug, the bug would already have been caught before review ever started. Proof that a fix works has to come from re-running the exact repro that demonstrated the defect in the first place, against the fixed code, and watching it flip from fail to pass.
-
-## Status
-
-v1.0.0, standalone.
-
-<!-- screenshots: added in a later phase -->
