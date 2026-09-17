@@ -1,13 +1,39 @@
 # prove-it
 
-A standalone Claude Code plugin: a code review harness where a finding is not real until a script reproduces it.
+A code review harness for Claude Code where a finding is not real until a script reproduces it. A panel of parallel reviewers finds issues, and a repro-verifier proves or refutes each one against the real code before you act on it.
 
-The plugin itself lives under [`plugins/prove-it/`](plugins/prove-it/README.md), including its own README with the full pitch, how it works, and install instructions. This repo is also a single-plugin marketplace, so it can be added directly:
+This repo is a single-plugin marketplace; the plugin itself lives under [`plugins/prove-it/`](plugins/prove-it/README.md).
+
+## How it works
+
+prove-it runs as a loop, not a one-shot report:
+
+1. **Parallel reviewers** examine the change at once, each hunting a different class of defect.
+2. **Repro-verify** writes and runs a script against the real code for each finding. It lands as **Confirmed** (the repro fails, so the defect is real), **Proven-safe** (the repro passes, so the finding is dropped), or **Inconclusive** (the repro cannot settle it, so it stays flagged).
+3. **Fix** only the Confirmed findings.
+4. **Confirm-fix** re-runs each finding's own repro and requires it to pass now. A green test suite is not accepted as proof, because it was already green while the bug existed.
+5. **Promote** the repro into a permanent regression test, so a bug proven once cannot silently return.
+
+## Install
 
 ```
 /plugin marketplace add ironmoose/prove-it
 /plugin install prove-it@prove-it
 ```
+
+Optionally run `/prove-it:setup` to detect your languages, choose a comment style, and install the edit-blocking gate. prove-it works out of the box without it.
+
+## Basic commands
+
+| Command | What it does |
+|---|---|
+| `/prove-it:review` | Review your local uncommitted diff |
+| `/prove-it:review <PR number or url>` | Review an open pull request |
+| `/prove-it:review <path>` | Review a specific path |
+| `/prove-it:setup` | Optional setup wizard: languages, comment style, and the gate |
+| `/prove-it:follow-up` | Re-run each Confirmed finding's repro against the fix and promote passing ones to regression tests |
+
+Full command reference: [review](plugins/prove-it/commands/review.md), [setup](plugins/prove-it/commands/setup.md), [follow-up](plugins/prove-it/commands/follow-up.md).
 
 ## How it compares
 
@@ -28,6 +54,12 @@ The honest caveat: prove-it was scoped to the security core here, and the full-d
 
 *(One pull request, not a benchmark. prove-it's cost is approximate from the run tally; the built-in figure is exact.)*
 
-## Status
+## Documentation
 
-v1.0.0. Agents, commands, the repro-verify loop, the edit-blocking gate, and conventions overlays all ship.
+- [Plugin README](plugins/prove-it/README.md): the full pitch, the problem it solves, and the loop in detail
+- [Review command](plugins/prove-it/commands/review.md): how the review orchestrator scopes, fans out, and repro-verifies
+- [Setup wizard](plugins/prove-it/commands/setup.md): languages, comment styles, gate install, and the config file
+- [Follow-up command](plugins/prove-it/commands/follow-up.md): confirm-fix and regression-test promotion
+- [The quality gate](plugins/prove-it/gate/README.md): the edit-blocking hook and the open, verify, confirm-fix, close cycle
+- [Reviewer agents](plugins/prove-it/agents): the specialized reviewer and verifier sub-agents
+- [Conventions overlays](plugins/prove-it/reference): the baseline TypeScript and Python style overlays
