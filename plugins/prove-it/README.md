@@ -41,6 +41,6 @@ A green suite tells you the tests you already had still pass. It does not tell y
 
 ## Status
 
-v0.1.0, early, standalone.
+v0.3.2, standalone.
 
 <!-- screenshots: added in a later phase -->

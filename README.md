@@ -11,4 +11,4 @@ The plugin itself lives under [`plugins/prove-it/`](plugins/prove-it/README.md),
 
 ## Status
 
-v0.1.0, early. Skeleton in place; agents and commands land in a later phase.
+v0.3.2. Agents, commands, the repro-verify loop, the edit-blocking gate, and conventions overlays all ship.
