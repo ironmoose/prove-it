@@ -11,4 +11,4 @@ The plugin itself lives under [`plugins/prove-it/`](plugins/prove-it/README.md),
 
 ## Status
 
-v0.4.0. Agents, commands, the repro-verify loop, the edit-blocking gate, and conventions overlays all ship.
+v1.0.0. Agents, commands, the repro-verify loop, the edit-blocking gate, and conventions overlays all ship.
