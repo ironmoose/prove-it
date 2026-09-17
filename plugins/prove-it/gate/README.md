@@ -33,6 +33,69 @@ directory like `scratchpad-notes/`, is not exempt. `/tmp/*` is already a
 prefix match anchored at the start of the path, so it has no equivalent
 substring gap.
 
+## Configuration (config.json)
+
+An optional shared config file lives at `$GATE_DIR/config.json` (the same
+directory as `gate-state.json`, i.e. `~/.claude/prove-it/config.json` by
+default). It is written by the setup wizard and read by both the wizard
+and the review command; `gate-check.sh` itself reads only one field out of
+it, `exempt_folders`. The other fields exist here for completeness, but the
+gate does not consume them.
+
+```json
+{
+  "version": 1,
+  "languages": ["typescript", "python"],
+  "hook_installed": true,
+  "exempt_folders": ["notes"],
+  "comment_style": { "template": "what-fix-why", "custom_body": null }
+}
+```
+
+- `version`: schema version of this file. Not read by the gate.
+- `languages`: the languages the setup wizard configured for this project.
+  Not read by the gate.
+- `hook_installed`: whether the wizard has registered this hook in
+  `~/.claude/settings.json`. Not read by the gate.
+- `exempt_folders`: additional folders the gate should always allow edits
+  to, on top of the built-in exemptions described above. This is the only
+  field `gate-check.sh` reads.
+- `comment_style`: the review command's comment template and optional
+  custom body text. Not read by the gate.
+
+### exempt_folders matching rule
+
+Each entry is matched with the same anchored path-component discipline as
+the built-in scratchpad exemption above, never a plain substring match:
+
+- A trailing slash on the entry is stripped before matching.
+- An entry that starts with `/` is treated as an absolute path: it exempts
+  the target file when the target path equals that entry, or begins with
+  `<entry>/`.
+- Any other entry (a bare name like `notes`, or a relative path like
+  `docs/generated`) is treated as a path-component sequence: it exempts the
+  target file when that sequence appears as a whole path component in the
+  target path, i.e. the path contains `/<entry>/` or ends with `/<entry>`. It
+  also exempts the target when the target path itself has no leading path
+  component and either equals the entry or starts with `<entry>/`, i.e. a
+  relative path passed through as-is (with nothing before the entry to match
+  a leading `/` against).
+
+So `"notes"` exempts `.../notes/a.md` and `.../project/notes`, but does NOT
+exempt `.../notes-ideas.md` or `.../project/notes-archive/x.md`, because
+`notes-ideas` and `notes-archive` are different path components than
+`notes`, not the same one with extra characters tacked on. It also exempts a
+bare relative target of `notes` or `notes/a.md` (no directory prefix at all).
+
+### Fails open
+
+`config.json` is entirely optional. If it does not exist, cannot be read,
+or is not valid JSON, `gate-check.sh` behaves exactly as it would with no
+config file at all: only the built-in exemptions apply, nothing errors,
+and no edit is denied because of it. This follows the same fail-open
+discipline documented above for a missing `jq` or malformed
+`gate-state.json`.
+
 ## The cycle
 
 ### Open

@@ -41,7 +41,7 @@
 # both files were fixed together on 2026-08-26 (previously undocumented as a
 # known, unfixed limitation, see gate/README.md history).
 
-GATE_DIR="$HOME/.claude/prove-it"
+GATE_DIR="${PROVE_IT_GATE_DIR:-$HOME/.claude/prove-it}"
 STATE_FILE="$GATE_DIR/gate-state.json"
 VERDICTS_FILE="$GATE_DIR/gate-verdicts.json"
 
@@ -67,7 +67,7 @@ TOOL_NAME="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)" ||
 FILE_PATH="$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // .tool_input.notebook_path // empty' 2>/dev/null)" || fail_open "could not extract file_path."
 
 # --- EXEMPT PATHS ------------------------------------------------------------
-GATE_DIR_EXPANDED="$HOME/.claude/prove-it"
+GATE_DIR_EXPANDED="$GATE_DIR"
 if [ -n "$FILE_PATH" ]; then
     case "$FILE_PATH" in
         "$GATE_DIR_EXPANDED"/*|"$GATE_DIR_EXPANDED")
@@ -80,6 +80,51 @@ if [ -n "$FILE_PATH" ]; then
             exit 0
             ;;
     esac
+
+    # --- user-configured exempt folders (config.json's exempt_folders) -----
+    # On top of the built-ins above, a setup-wizard-written config file at
+    # $GATE_DIR/config.json may list additional folders that are always
+    # exempt from the gate. This is a best-effort, fail-open read: a missing,
+    # unreadable, or malformed config.json is treated exactly like no
+    # config.json at all (built-ins only, no error, no denial change) -- see
+    # FAILS OPEN in the header. jq is already guaranteed present at this
+    # point in the script (see the jq guard above), so it is used freely
+    # here, but every failure mode still falls through to "no exempt_folders
+    # configured" rather than propagating an error.
+    CONFIG_FILE="$GATE_DIR/config.json"
+    if [ -f "$CONFIG_FILE" ]; then
+        EXEMPT_FOLDERS="$(jq -r '.exempt_folders // [] | .[]?' "$CONFIG_FILE" 2>/dev/null)"
+        if [ -n "$EXEMPT_FOLDERS" ]; then
+            while IFS= read -r EXEMPT_FOLDER; do
+                [ -n "$EXEMPT_FOLDER" ] || continue
+                # Strip a trailing slash so "notes/" and "notes" match the same way.
+                EXEMPT_FOLDER="${EXEMPT_FOLDER%/}"
+                [ -n "$EXEMPT_FOLDER" ] || continue
+                case "$EXEMPT_FOLDER" in
+                    /*)
+                        # Absolute path: exempt the path itself or anything under it.
+                        case "$FILE_PATH" in
+                            "$EXEMPT_FOLDER"|"$EXEMPT_FOLDER"/*)
+                                exit 0
+                                ;;
+                        esac
+                        ;;
+                    *)
+                        # Bare name or relative path: anchored path-component match,
+                        # same discipline as the scratchpad match above -- "notes"
+                        # exempts ".../notes/x.md" but not ".../notes-ideas.md",
+                        # because that is a different path component, not a
+                        # substring hit.
+                        case "$FILE_PATH" in
+                            */"$EXEMPT_FOLDER"|*/"$EXEMPT_FOLDER"/*|"$EXEMPT_FOLDER"|"$EXEMPT_FOLDER"/*)
+                                exit 0
+                                ;;
+                        esac
+                        ;;
+                esac
+            done <<< "$EXEMPT_FOLDERS"
+        fi
+    fi
 fi
 
 # --- no gate state file at all => allow -------------------------------------
