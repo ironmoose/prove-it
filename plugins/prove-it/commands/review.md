@@ -188,6 +188,8 @@ Lead with the count that matters, before the buckets:
 
 > **N of M findings were real.** M defect-claims were raised across the review pass; N reproduced against the actual code. (K proven safe and dropped, L inconclusive.)
 
+**Report the cost.** Every reviewer and repro-verifier pod returns a `subagent_tokens` count in its completion. Sum them across every pod the review spawned, add the orchestrator's own usage when you have it, and present a one-line cost footer alongside the headline, for example: "Cost: ~X tokens across N pods (~$Y)." Split the token total by model when you can (the Sonnet reviewer pods versus the orchestrator), since their per-token prices differ. Give the dollar figure only when you know current per-model pricing, label it approximate, and never hardcode a rate you are unsure of: report the token totals alone if you cannot price them confidently. The point is to make the review's real resource cost visible, not to assert a precise invoice.
+
 Then present four buckets:
 
 **MUST-FIX** (CONFIRMED). Each finding with its `file:line`, the summary, the path to its repro script, and the confirming evidence (the repro's failing output). These are proven defects.
