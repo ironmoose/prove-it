@@ -132,6 +132,14 @@ Dispatch all ten reviewers in a single message so they run concurrently. Spawn e
 
 Each reviewer returns structured findings: `file:line`, severity, description, suggested fix. Wait for all ten to return real results (see the completion barrier in the Spawn contract above) before moving on.
 
+### Large diffs: pre-cut per pod, backfill the cap, split the repro
+
+When the captured diff is past the ~30k-token split threshold from step 1, these three patterns keep a big-PR review tractable. Use them, and say you did.
+
+- **Pre-cut the diff per pod.** Rather than hand every reviewer the whole diff and let each re-derive its slice, write each feature-area chunk to its own file and point each pod at exactly its file ("this is your complete diff, do not re-diff the repo"). This keeps each pod's context small and is the main thing that stops a reviewer from spending its turn budget re-reading the tree, reinforcing the Tool budget contract in each reviewer def.
+- **Backfill the concurrency cap.** Subagent concurrency is capped (for example `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=20`). Do not fire all N pods at once and assume they run together: launch up to the cap, then backfill the next pod as each slot frees, until every chunk of every lane has actually run. A pod you believe ran but that never got a slot is a lane that never ran.
+- **Split the repro-verifier into parallel buckets.** In verify mode, group the defect-claims by what they need to run: claims a no-dependency unit repro can settle, versus claims that need a real service (a database via testcontainers, say). Run the buckets concurrently so the slow service-backed repros do not serialize behind the cheap ones.
+
 ## Step 5: Consolidate and split defect-claims from nits
 
 Consolidate every reviewer's findings:
