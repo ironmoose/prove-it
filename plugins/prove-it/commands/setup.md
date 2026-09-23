@@ -91,10 +91,11 @@ Move to Step 2.
 
 ## Step 2: Detect Language(s) and Report Applicable Overlays
 
-prove-it ships two baseline convention overlays that its language-sensitive reviewer agents read before judging a change:
+prove-it ships three baseline convention overlays that its language-sensitive reviewer agents read before judging a change:
 
 - `reference/typescript-conventions.md` applies to `.ts` / `.tsx` files.
 - `reference/python-conventions.md` applies to `.py` files.
+- `reference/lua-conventions.md` applies to `.lua` files.
 
 First, make sure the wizard is pointed at a single repo, not a workspace root:
 
@@ -104,8 +105,9 @@ First, make sure the wizard is pointed at a single repo, not a workspace root:
 Once you are inside a single repo, detect what it uses:
 
 1. From the current working directory, sample the repo's tracked files. A cheap probe:
-   - `git ls-files '*.ts' '*.tsx' '*.py' 2>/dev/null | head -n 50` if this is a git repo, otherwise a bounded `find . -maxdepth 4 \( -name '*.ts' -o -name '*.tsx' -o -name '*.py' \)`.
-   - Also note presence of `tsconfig.json`, `package.json`, `pyproject.toml`, `setup.py`, or `requirements.txt` as corroborating signals.
+   - `git ls-files '*.ts' '*.tsx' '*.py' '*.lua' 2>/dev/null | head -n 50` if this is a git repo, otherwise a bounded `find . -maxdepth 4 \( -name '*.ts' -o -name '*.tsx' -o -name '*.py' -o -name '*.lua' \)`.
+   - Also note presence of `tsconfig.json`, `package.json`, `pyproject.toml`, `setup.py`, `requirements.txt`, `.luacheckrc`, a `.rockspec`, or a `.toc` addon manifest as corroborating signals.
+   - For Lua, also try to pin the VERSION, because 5.1, 5.3 and 5.4 differ in ways that change whether code is correct and embedded hosts are usually pinned to an old one. A `.toc` interface number, a `.rockspec` dependency line, or a bundled LuaJIT all answer it. Record what you found, or record that it is unknown; do not let it default to 5.4 silently.
 2. Report which overlays apply. For example:
 
    ```

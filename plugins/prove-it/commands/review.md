@@ -93,17 +93,20 @@ If the captured diff exceeds roughly 30k tokens, plan to split it by file or fea
 
 Detect the language of the changed code and pick the conventions overlay to inject into the language-sensitive reviewers. This is the detection rule; apply it against the changed-file list, skipping test fixtures and binaries:
 
-1. **By extension:** any `.ts` / `.tsx` / `.js` / `.jsx` means TypeScript; any `.py` means Python.
-2. **Confirm or tiebreak on project markers:** `package.json` or `tsconfig.json` means TypeScript; `pyproject.toml`, `setup.py`, or `requirements.txt` means Python.
-3. **Mixed:** both a TypeScript-family extension and `.py` present means `LANG = mixed`.
-4. **Neither:** if the language is neither TypeScript nor Python, there is no overlay. Say so explicitly in the spawn prompt; never invent an overlay path that does not exist.
+1. **By extension:** any `.ts` / `.tsx` / `.js` / `.jsx` means TypeScript; any `.py` means Python; any `.lua` means Lua.
+2. **Confirm or tiebreak on project markers:** `package.json` or `tsconfig.json` means TypeScript; `pyproject.toml`, `setup.py`, or `requirements.txt` means Python; `.luacheckrc`, `.rockspec`, or a `.toc` file (an addon manifest) means Lua.
+3. **Mixed:** more than one of those families present means `LANG = mixed`; inject every overlay that applies.
+4. **Neither:** if the language is none of the three, there is no overlay. Say so explicitly in the spawn prompt; never invent an overlay path that does not exist.
 
 | `LANG` | Overlay path to inject (relative to the plugin root) |
 |--------|------------------------------------------------------|
 | TypeScript | `reference/typescript-conventions.md` |
 | Python | `reference/python-conventions.md` |
-| mixed | both of the above |
+| Lua | `reference/lua-conventions.md` |
+| mixed | every overlay that applies |
 | anything else | none; state "no overlay" in the spawn prompt |
+
+**For Lua, also state the target Lua version in the spawn prompt** when the repo makes it knowable (a `.toc` interface number, a `.rockspec` dependency, a LuaJIT bundle). 5.1, 5.3 and 5.4 differ in ways that change whether code is correct, and an embedded host is usually pinned to an old one. If the version cannot be determined, say that rather than letting a reviewer assume 5.4.
 
 **Gets the overlay:** `code-reviewer`, `code-smells-reviewer`, `test-reviewer`, `edge-case-qa`, `contract-reviewer`, `security-reviewer` (type contracts and injection/deserialization patterns are language-specific). **Takes no overlay:** `acceptance-qa`, `self-containment-reviewer`, `comment-claim-verifier`, `doc-vouching-reviewer`, `repro-verifier` (they reason about intent, private-context leaks, justification gaps, or runtime behavior, not language conventions).
 
