@@ -89,7 +89,7 @@ check_in() {
 }
 check_in "gate section" '^### Lane relevance gate' '`-repro-verifier` is refused'
 check_in "gate section" '^### Lane relevance gate' 'forced overrides apply to every slice'
-check_in "gate section" '^### Lane relevance gate' 'not run'
+check_in "gate section" '^### Lane relevance gate' 'is reported NOT COVERED, not run'
 check_in "PR section" '^### A pull request' 'review nothing'
 check_in "PR section" '^### A pull request' 'git status --porcelain'
 check_in "PR section" '^### A pull request' 'valid only with a PR target'

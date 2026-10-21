@@ -24,6 +24,10 @@ prove-it runs as a loop, not a one-shot report:
 - **Review your local working diff.** Same loop, run against uncommitted local changes, for review before you open a PR.
 - **Follow-up review after a fix.** Re-runs the repro for each previously Confirmed finding against the fixed code, confirms or reopens it, and promotes confirmed fixes to regression tests.
 
+## What's new in 1.1.0
+
+Reviews now start only the lanes the diff needs and report which were skipped and why. `--lanes +x,-y` forces lanes on or off (the repro-verifier always runs). Large diffs are reviewed in slices, with a Coverage section that marks anything unreviewed NOT COVERED. A PR target accepts path arguments to scope the review, and `--no-checkout` reviews a PR that is already checked out at its head (for example in a worktree) without switching branches.
+
 ## Install
 
 ```
