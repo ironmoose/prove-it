@@ -19,7 +19,7 @@ There is no task tracker here. The review TARGET is one of three things, resolve
 4. Review pass             (the lanes the diff earns, in parallel, read-only standard subagents, findings via returned result)
 5. Consolidate + dedupe    (main: split defect-claims from nits)
 6. Verify mode             (prove-it:repro-verifier: CONFIRMED / PROVEN-SAFE / INCONCLUSIVE)
-7. Open the gate           (optional: prove-it-gate, if installed)
+7. Open the gate           (optional: prove-it-gate, if installed; local diffs only)
 8. Present re-ranked result (MUST-FIX / DROP / KEEP / NITS; lead with real-out-of-raised)
 9. Hand off                (fix MUST-FIX, then /prove-it:follow-up)
 ```
@@ -214,7 +214,9 @@ Spawn `prove-it:repro-verifier` with the defect-claims, the captured diff, `REPO
 
 ## Step 7: Open the gate (optional enforcement)
 
-If `command -v prove-it-gate` found it in step 6, open the gate against the defect-claims so its `PreToolUse` hook blocks edits to the affected files until each finding is resolved:
+**PR targets never open the gate.** When the target is a PR (with or without `--no-checkout` or path args), never run `prove-it-gate open`, `verify`, or `close`: the gate is one machine-wide slot for the author's own fix cycle, and a review of someone else's PR must not lock it or block edits to the PR's files. Skip the rest of this step, keep the durable repro dir from step 6, and say "Gate: not opened (PR review is advisory)" in the step 8 result. The verdicts still drive step 8 unchanged.
+
+Only when the target is the local working diff (or a path or commit range in the user's own checkout): if `command -v prove-it-gate` found it in step 6, open the gate against the defect-claims so its `PreToolUse` hook blocks edits to the affected files until each finding is resolved:
 
 ```
 prove-it-gate open --target "<review target>" --finding "<id>:<file>:<summary>" [--finding "<id>:<file>:<summary>" ...]
@@ -279,7 +281,7 @@ This governs formatting only, not content: the self-containment bar below still 
 
 ## Step 9: Hand off
 
-Tell the user the next step: fix the MUST-FIX findings (and any KEEP findings they judge real), then run `/prove-it:follow-up` to confirm each fix against its own repro and promote the repros into permanent regression tests. Note whether the gate is enforcing (installed and open) or advisory-only. If you checked out a PR branch or changed the working branch in step 1, restore the original branch before finishing (with `--no-checkout` nothing was checked out, so there is nothing to restore).
+Tell the user the next step: fix the MUST-FIX findings (and any KEEP findings they judge real), then run `/prove-it:follow-up` to confirm each fix against its own repro and promote the repros into permanent regression tests. Note whether the gate is enforcing (local diff, installed and open) or advisory-only (a PR review is always advisory: "Gate: not opened (PR review is advisory)"). If you checked out a PR branch or changed the working branch in step 1, restore the original branch before finishing (with `--no-checkout` nothing was checked out, so there is nothing to restore).
 
 ---
 
@@ -294,7 +296,7 @@ Tell the user the next step: fix the MUST-FIX findings (and any KEEP findings th
 - **No unproven CRITICAL or HIGH reaches the user as real.** A severity a static reviewer assigns is a claim, not a verdict. No CRITICAL or HIGH defect-claim is ever presented as a real defect until the repro-verifier returns CONFIRMED for it. A crit/high that comes back PROVEN-SAFE is dropped and shown with its disproof; one that comes back INCONCLUSIVE is presented only as an unproven caution in KEEP, labeled unproven, never rendered as a standing critical. Show the static severity only alongside its verify verdict, never on its own. This is the single failure that most damages trust: a confident, specific, wrong CRITICAL that a plain static review would have handed the author as fact.
 - **A pre-existing defect is labeled and is not a blocker on this change.** A finding this change did not introduce (unchanged context, or relocated code identical to its merge-base original) is real but was not shipped here. Present it with its verify-mode verdict like any other finding, but label it plainly as pre-existing and not introduced by this change, so it is never treated as a fix the author must make to merge this change: flagging already-shipped code as a blocker picks a fight over a decision that is not under review. Carry each finding's PR-introduced or pre-existing label from step 5 into the presentation, and when attribution is uncertain, treat the finding as pre-existing.
 - **The repro dir is durable.** It lives under `~/.claude/prove-it/`, outside the target repo, so the follow-up pass in a later session finds the same scripts.
-- **Optional gate, mandatory discipline.** `prove-it-gate` absent means advisory-only, said plainly; it never means the verification is skipped.
+- **Optional gate, mandatory discipline.** `prove-it-gate` absent means advisory-only, said plainly; it never means the verification is skipped. A PR review never opens the gate; it gets the durable repro dir only.
 - **No em dashes** in any user-facing text.
 - **Comments carry the answer, not homework.** A finding rendered for the author never asks them to verify something you could establish by reading the repo. Trace in-repo dependencies and state the conclusion; surface only a genuinely external question, and that as a named needs-external-verification / [GOVERNANCE] item, not an open ask to the author.
 - **A posted comment is self-contained.** No scratch-dir paths or repro filenames in anything posted to the author; inline the reproducing input and the failing output instead, so a reader with zero access to your machine can reproduce it. The local terminal view may still point at the repro script path.

@@ -124,6 +124,11 @@ for lane in code-reviewer acceptance-qa repro-verifier; do
   fi
 done
 
+check_in "gate step" '^## Step 7' 'never run `prove-it-gate open`'
+check_in "gate step" '^## Step 7' 'Gate: not opened (PR review is advisory)'
+check_in "gate step" '^## Step 7' 'local working diff'
+check_in "hard rules" '^## Hard rules' 'A PR review never opens the gate'
+
 # Roster table keeps all ten review agents.
 for agent in code-reviewer code-smells-reviewer edge-case-qa test-reviewer \
   contract-reviewer security-reviewer acceptance-qa doc-vouching-reviewer \
