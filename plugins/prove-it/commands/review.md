@@ -91,7 +91,7 @@ In every case the base SHA comes from `git merge-base origin/<base-ref> HEAD`, n
 
 Keep `-M` so a rename reads as a rename, not as a delete plus a spurious brand-new file, and tell the reviewers in their prompts which files are renames or moves.
 
-Record a stable **review id** for this target now: the PR number for a PR, otherwise the branch name, otherwise a short slug of the path or commit range. It is used in step 6 to key the durable repro directory, so it must resolve to the same value across sessions for the same target. When path args scope a PR, fold a hash of the path scope into the id (`<pr>-<hash>`), so a scoped and a whole-PR review never share a directory. Compute the hash exactly: normalize each path (strip a leading `./` and trailing `/`), deduplicate, sort, join with `\n`, take the sha1, and keep the first 8 hex characters. Before writing new `slice-*.md` files, clear any existing `slice-*.md` in the step 6 scratch dir for this review id (`~/.claude/prove-it/repros/<review-id>/`, or the path `prove-it-gate repro-dir <review-id>` prints).
+Record a stable **review id** for this target now: the PR number for a PR, otherwise the branch name, otherwise a short slug of the path or commit range. It is used in step 6 to key the durable repro directory, so it must resolve to the same value across sessions for the same target. When path args scope a PR, fold a hash of the path scope into the id (`<pr>-<hash>`), so a scoped and a whole-PR review never share a directory. Compute the hash exactly: normalize each path (strip a leading `./` and trailing `/`), deduplicate, sort, join with `\n` (no trailing newline), take the sha1, and keep the first 8 hex characters. Before writing new `slice-*.md` files, clear any existing `slice-*.md` in the step 6 scratch dir for this review id (`~/.claude/prove-it/repros/<review-id>/`, or the path `prove-it-gate repro-dir <review-id>` prints).
 
 If the captured diff exceeds roughly 30k tokens, plan to split it into slices by file or feature area in step 4 and run parallel reviewer instances per slice, then consolidate across slices.
 
@@ -152,7 +152,7 @@ The `acceptance-qa` lane needs to know what this change was supposed to do. Gath
 
 **Fail open.** When you cannot tell whether a lane has work (an unreadable diff, a mixed change, an unfamiliar file type), spawn it. A lane runs unless you can say plainly why it has nothing to do.
 
-**`--lanes` overrides the gate.** `--lanes +security,-test` is a comma-separated list; `+<lane>` is forced on and `-<lane>` is forced off, whatever the gate decided. Use the short names `code-reviewer, code-smells, edge-case, test, contract, security, acceptance, doc-vouching, self-containment, comment-claim`; the full `subagent_type` is accepted too (`prove-it:test-reviewer` or `test-reviewer`). An unrecognised name is ignored and reported (one line in the step 8 result naming it). Label each forced lane `forced on` or `forced off` in the step 8 result. Forcing off an always-run review lane is allowed here but must be said plainly. `-repro-verifier` is refused (in either form, `-prove-it:repro-verifier` included) with a one-line note: `repro-verifier` cannot be forced off.
+**`--lanes` overrides the gate.** `--lanes +security,-test` is a comma-separated list; `+<lane>` is forced on and `-<lane>` is forced off, whatever the gate decided. Each lane takes either form, short name then full agent name: `code-reviewer` → `code-reviewer`, `code-smells` → `code-smells-reviewer`, `edge-case` → `edge-case-qa`, `test` → `test-reviewer`, `contract` → `contract-reviewer`, `security` → `security-reviewer`, `acceptance` → `acceptance-qa`, `doc-vouching` → `doc-vouching-reviewer`, `self-containment` → `self-containment-reviewer`, `comment-claim` → `comment-claim-verifier`; the `prove-it:` prefix is optional (the full `subagent_type` is accepted too). An unrecognised name is ignored and reported (one line in the step 8 result naming it). Label each forced lane `forced on` or `forced off` in the step 8 result. Forcing off an always-run review lane is allowed here but must be said plainly. `-repro-verifier` is refused (in either form, `-prove-it:repro-verifier` included) with a one-line note: `repro-verifier` cannot be forced off.
 
 On a split diff, forced overrides apply to every slice. A lane counts as run in `Lanes:` only if it returned a real result on at least one slice; it counts as skipped only if skipped on every slice; a lane that is NOT COVERED on every slice it was selected for is reported NOT COVERED, not run.
 
@@ -220,10 +220,10 @@ Spawn `prove-it:repro-verifier` with the defect-claims, the captured diff, `REPO
 Only for a non-PR target (a local working diff, or a path or commit range in the user's own checkout), which opens the gate: if `command -v prove-it-gate` found it in step 6, open the gate against the defect-claims so its `PreToolUse` hook blocks edits to the affected files until each finding is resolved:
 
 ```
-prove-it-gate open --target "<review target>" --finding "<id>:<file>:<summary>" [--finding "<id>:<file>:<summary>" ...]
+prove-it-gate open --target "<review id>" --finding "<id>:<file>:<summary>" [--finding "<id>:<file>:<summary>" ...]
 ```
 
-Use one `--finding` per defect-claim, and reuse the same finding ids in every later `prove-it-gate` call for this review (including the follow-up pass). Then record each verify-mode verdict, in the mode the repro-verifier reached, so the gate holds the evidence:
+The `--target` is the review id from step 1, so `/prove-it:follow-up` can check that the gate's target matches its review. Use one `--finding` per defect-claim, and reuse the same finding ids in every later `prove-it-gate` call for this review (including the follow-up pass). Then record each verify-mode verdict, in the mode the repro-verifier reached, so the gate holds the evidence:
 
 | Verdict | Command |
 |---------|---------|

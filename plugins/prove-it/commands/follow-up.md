@@ -24,7 +24,7 @@ The discipline that matters most here: **a fix is not confirmed because the repo
 
 Recover the Confirmed findings from the review that opened this cycle, and each one's repro script path.
 
-- **Resolve the review id.** Use the argument if given (the PR number, branch name, or path slug the review used). If the PR was reviewed with path args, take the full `<pr>-<hash>` id from the review result or hand-off, or ask the user for it; do not infer `<pr>`. Otherwise infer it the same way `/prove-it:review` did: the current branch.
+- **Resolve the review id.** Use the argument if given (the PR number, branch name, or path slug the review used). If the PR was reviewed with path args, take the full `<pr>-<hash>` id from the review result or hand-off, or ask the user for it; never guess the hash. For a whole-PR follow-up with no argument, the id is `<pr>`, the number of the PR checked out or named. Otherwise infer it the same way `/prove-it:review` did: the current branch.
 - **Detect `prove-it-gate` once** with `command -v prove-it-gate`, and carry the result through steps 2 and 4.
 - **Use the gate only for a local review.** If the gate is installed, run `prove-it-gate status` and use it only when its `target` matches this review id. Then it lists the open gate's findings with their verdicts and each Confirmed finding's recorded `repro_path`, and is the authoritative source of what is Confirmed and where its repro lives.
 - **For a PR review id, never read or touch the gate** (a PR review never opens one, and any open gate belongs to another target). Recover the findings from the durable dir and the review result, as below.

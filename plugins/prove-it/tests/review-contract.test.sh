@@ -108,12 +108,16 @@ check_in "gate section" '^### Lane relevance gate' 'the full `subagent_type` is 
 check_in "large diffs" '^### Large diffs' '<step 6 scratch dir>/slice-<k>.md'
 check_in "consolidate" '^## Step 5' 'unmet only if no slice met it'
 check_in "gate step" '^## Step 7' 'non-PR target'
+check_in "gate step" '^## Step 7' 'The `--target` is the review id'
+check_in "review id" '^### Resolve the base' '(no trailing newline)'
+check_in "gate section" '^### Lane relevance gate' '`edge-case` → `edge-case-qa`'
+check_in "gate section" '^### Lane relevance gate' '`comment-claim` → `comment-claim-verifier`'
 check_in "result" '^## Step 8' 'Review id: {full review id}'
 check_in "hand off" '^## Step 9' 'full review id'
 
 FOLLOW="$SCRIPT_DIR/../commands/follow-up.md"
 for phrase in "only for a local review" "never read or touch the gate" \
-  "do not infer" "A PR review has no gate to record into or close" \
+  "never guess the hash" "the id is \`<pr>\`" "A PR review has no gate to record into or close" \
   "Never run \`confirm-fix\`, \`close\`, or \`override\` on a gate whose \`target\` differs"; do
   if grep -qiF -- "$phrase" "$FOLLOW"; then pass "follow-up: '$phrase'"; else fail "follow-up lacks '$phrase'"; fi
 done
