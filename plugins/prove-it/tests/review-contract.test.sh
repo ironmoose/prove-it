@@ -24,7 +24,8 @@ GATE_SECTION="$(awk '
 ' "$REVIEW")"
 
 for phrase in "all ten" "10 reviewers" "ten lanes" "ten reviewers" \
-  "until every chunk of every lane" "Paste the diff, the clipped"; do
+  "until every chunk of every lane" "Paste the diff, the clipped" \
+  "Never proceed without a real result from every lane" "gh pr diff\` filtered"; do
   if grep -qiF -- "$phrase" "$REVIEW"; then
     fail "absent phrase still present: '$phrase'"
   else
@@ -75,6 +76,30 @@ check_row "security-reviewer" "trust boundary"
 check_row "doc-vouching-reviewer" "justifies"
 check_row "self-containment-reviewer" "prose"
 check_row "comment-claim-verifier" "falsifiable"
+
+# Section-scoped phrase checks: section from heading regex to the next heading.
+section() { awk -v h="$1" '$0 ~ h { on = 1; next } on && /^#+ / { exit } on { print }' "$REVIEW"; }
+check_in() {
+  local name="$1" heading="$2" phrase="$3"
+  if section "$heading" | grep -qF -- "$phrase"; then
+    pass "$name: '$phrase'"
+  else
+    fail "$name lacks '$phrase'"
+  fi
+}
+check_in "gate section" '^### Lane relevance gate' '`-repro-verifier` is refused'
+check_in "gate section" '^### Lane relevance gate' 'forced overrides apply to every slice'
+check_in "gate section" '^### Lane relevance gate' 'not run'
+check_in "PR section" '^### A pull request' 'review nothing'
+check_in "PR section" '^### A pull request' 'git status --porcelain'
+check_in "PR section" '^### A pull request' 'valid only with a PR target'
+check_in "PR section" '^### A pull request' 'git diff -M $BASE_SHA...HEAD -- <paths>'
+check_in "hard rules" '^## Hard rules' 'NOT COVERED'
+check_in "review id" '^### Resolve the base' 'hash of the path scope'
+check_in "gate section" '^### Lane relevance gate' 'out of scope for this scoped review'
+check_in "large diffs" '^### Large diffs' 'repro bucket <name>: NOT RUN'
+check_in "large diffs" '^### Large diffs' 'renames/moves called out'
+check_in "review id" '^### Resolve the base' 'clear any existing'
 
 # The gate table has exactly eight lane rows.
 ROWS="$(printf '%s\n' "$GATE_SECTION" | grep '^| `' | wc -l | tr -d ' ')"
