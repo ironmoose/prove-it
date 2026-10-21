@@ -1,7 +1,7 @@
 ---
 name: review
 description: "Prove-it review orchestrator. Resolves a review target (local diff, a PR, or a path/commit range), dispatches the parallel reviewer agents, then proves or refutes each defect-claim by running a repro against the real code. Presents repro-proven findings: how many were real out of how many raised. Never writes fixes itself."
-argument-hint: "[local | <PR number/URL> | <path or commit range>] [--goal \"...\"]"
+argument-hint: "[local | <PR number/URL> | <path or commit range>] [--goal \"...\"] [--lanes +<lane>,-<lane>]"
 ---
 
 # prove-it -- Review Orchestrator
@@ -16,7 +16,7 @@ There is no task tracker here. The review TARGET is one of three things, resolve
 1. Resolve target         (main: local diff | PR | path/commit range; base from REMOTE ref)
 2. Detect language + inject conventions (overlays + target repo CLAUDE.md)
 3. Gather stated intent    (PR title/body, commits, --goal, or inferred from diff)
-4. Review pass             (10 reviewers in parallel, read-only standard subagents, findings via returned result)
+4. Review pass             (the lanes the diff earns, in parallel, read-only standard subagents, findings via returned result)
 5. Consolidate + dedupe    (main: split defect-claims from nits)
 6. Verify mode             (prove-it:repro-verifier: CONFIRMED / PROVEN-SAFE / INCONCLUSIVE)
 7. Open the gate           (optional: prove-it-gate, if installed)
@@ -45,6 +45,8 @@ The reviewers you dispatch (all registered under this plugin):
 ---
 
 ## Step 1: Resolve the target and capture the diff
+
+Parse `--lanes +<lane>,-<lane>` out of the arguments first, if present (see the lane relevance gate in step 4); the rest of the argument is the target.
 
 Determine the target from the argument. Default, when no argument is given, is the local working diff.
 
@@ -123,9 +125,34 @@ The `acceptance-qa` lane needs to know what this change was supposed to do. Gath
 3. For a local diff or a path/range: the commit messages in the range.
 4. **If none of the above pins down intent, infer it from the diff and say so plainly** in the `acceptance-qa` prompt and later to the user: "no stated intent was available; acceptance was checked against intent inferred from the diff." An inferred goal is weaker evidence than a stated one, and the user should know which they got.
 
-## Step 4: Review pass (dispatch the 10 reviewers in parallel)
+## Step 4: Review pass (dispatch the selected reviewers in parallel)
 
-Dispatch all ten reviewers in a single message so they run concurrently. Spawn each as a standard subagent (its `subagent_type` plus a distinct `description`, and NO `name`), per the Spawn contract above: naming a reviewer makes it an in-process teammate that bypasses its read-only tool allowlist. Into EACH reviewer's spawn prompt, inline:
+### Lane relevance gate
+
+**Spawn only the lanes the diff gives work to.** The full roster is the ceiling, not the floor. Before dispatch, decide each review lane from the changed-file list and the diff you already inlined; a lane with clearly nothing in scope is not spawned. This is orchestrator-side: the agents themselves are unchanged, you simply spawn fewer of them.
+
+**Always run** (never gated): `code-reviewer`, `acceptance-qa`, and the step 6 `repro-verifier`. Any code change can break conventions or its stated intent, and repro-verify runs the repo's own gates even on a docs-only diff.
+
+**Gated: spawn only when the diff meets the trigger.**
+
+| Lane | Spawn when the diff... |
+|---|---|
+| `edge-case-qa` | changes executable logic: branches, loops, I/O, parsing, async, data transforms (skip docs, config, constants-only, pure formatting) |
+| `code-smells-reviewer` | adds or modifies a non-trivial function or class body (skip test-only, or a change under ~10 lines that is mechanical) |
+| `test-reviewer` | includes test files |
+| `contract-reviewer` | changes a type or exported signature, a validation or DB schema, or an API request/response shape |
+| `security-reviewer` | touches a trust boundary: input handling, auth/authz, queries, file paths, deserialization, HTTP/SSRF, secrets/crypto, HTML/injection, or externally-sourced data |
+| `doc-vouching-reviewer` | adds or changes a comment that justifies a behavior (a swallowed error, fallback, guard, "safe because...") |
+| `self-containment-reviewer` | includes committed-facing prose: comments, docstrings, README or markdown, descriptive new-file text |
+| `comment-claim-verifier` | changes a comment or docstring that makes a falsifiable claim about the code |
+
+**Fail open.** When you cannot tell whether a lane has work (an unreadable diff, a mixed change, an unfamiliar file type), spawn it. A lane runs unless you can say plainly why it has nothing to do.
+
+**`--lanes` overrides the gate.** `--lanes +security,-test` is a comma-separated list; `+<lane>` is forced on and `-<lane>` is forced off, whatever the gate decided. Use the short names `code-reviewer, code-smells, edge-case, test, contract, security, acceptance, doc-vouching, self-containment, comment-claim`. Label each forced lane `forced on` or `forced off` in the step 8 result. Forcing off an always-run review lane is allowed here but must be said plainly; `repro-verifier` cannot be turned off.
+
+Keep a list of every review lane you skipped and the one-line reason, for the step 8 result.
+
+Dispatch the selected reviewers (the always-run lanes plus every gated lane that earned a spawn, plus any forced on) in a single message so they run concurrently. Spawn each as a standard subagent (its `subagent_type` plus a distinct `description`, and NO `name`), per the Spawn contract above: naming a reviewer makes it an in-process teammate that bypasses its read-only tool allowlist. Into EACH reviewer's spawn prompt, inline:
 
 - The full captured diff (or this reviewer's chunk of it, for a split large diff), with renames/moves called out.
 - The complete current bodies of any functions the diff shows only partially through context-truncation, and the bodies of the callers of changed functions, so a reviewer never has to guess at code the diff clipped.
@@ -133,7 +160,7 @@ Dispatch all ten reviewers in a single message so they run concurrently. Spawn e
 - For `acceptance-qa`: the stated (or inferred, so-labeled) intent from step 3.
 - `REPO_PATH`: the absolute path to the target repo. Reviewers may read additional files for surrounding context, but the diff is inlined so they do not have to reconstruct it.
 
-Each reviewer returns structured findings: `file:line`, severity, description, suggested fix. Wait for all ten to return real results (see the completion barrier in the Spawn contract above) before moving on.
+Each reviewer returns structured findings: `file:line`, severity, description, suggested fix. Wait for every dispatched reviewer to return a real result (see the completion barrier in the Spawn contract above) before moving on.
 
 ### Large diffs: pre-cut per pod, backfill the cap, split the repro
 
@@ -197,7 +224,12 @@ Use one `--finding` per defect-claim, and reuse the same finding ids in every la
 
 ## Step 8: Present the re-ranked result
 
-Lead with the count that matters, before the buckets:
+Lead with the lanes, then the count that matters, before the buckets:
+
+> Lanes: {N} run / {M} skipped
+> repro-verifier: ran
+
+N and M count review lanes only. Under the `Lanes:` line list each skipped lane with its one-line reason from the step 4 gate, and mark any `--lanes` override as `forced on` or `forced off`. `repro-verifier` is never gated, so it is reported on its own line and not counted in N or M. Then the headline:
 
 > **N of M findings were real.** M defect-claims were raised across the review pass; N reproduced against the actual code. (K proven safe and dropped, L inconclusive.)
 
@@ -238,6 +270,7 @@ Tell the user the next step: fix the MUST-FIX findings (and any KEEP findings th
 - **Resolve the base from the REMOTE ref.** `git merge-base origin/<base-ref> HEAD`, never a bare local branch name. A local base ref silently feeds reviewers a superset of the change.
 - **Inline context, not references.** Paste the diff, the clipped function bodies, the caller bodies, and the conventions into each reviewer's prompt. Reviewers have no tracker to fetch from.
 - **Consolidate only after the completion barrier.** Every dispatched reviewer must have returned a real result. For any reviewer that finished with an empty or truncated report, first resume it by SendMessage to its retained `agentId` to have it re-emit its complete report; re-spawn a fresh subagent only if that resume also returns nothing. Never proceed without a real result from every lane. A reviewer killed by a max-output-tokens hard error (cut off mid-emit) is a distinct failure from an empty finish, and its partial output is not a result: do not resume it, re-spawn it fresh with an explicit instruction to keep the report terse and stay within budget (state findings, do not recite the diff). Treat both an empty completion and a max-output hard error as "pod failed," never as a result.
+- **Spawn only the lanes the diff earns, and say which were skipped.** The step 4 gate fails open: a lane that might have work runs. Every skip is reported with its reason in step 8; `--lanes` overrides are labeled `forced on` / `forced off`.
 - **Verify mode is mandatory, every review, no skip conditions.** Not for a one-line diff, not when the gate came back clean, not for a docs-only change. An unproven finding is a guess.
 - **No unproven CRITICAL or HIGH reaches the user as real.** A severity a static reviewer assigns is a claim, not a verdict. No CRITICAL or HIGH defect-claim is ever presented as a real defect until the repro-verifier returns CONFIRMED for it. A crit/high that comes back PROVEN-SAFE is dropped and shown with its disproof; one that comes back INCONCLUSIVE is presented only as an unproven caution in KEEP, labeled unproven, never rendered as a standing critical. Show the static severity only alongside its verify verdict, never on its own. This is the single failure that most damages trust: a confident, specific, wrong CRITICAL that a plain static review would have handed the author as fact.
 - **A pre-existing defect is labeled and is not a blocker on this change.** A finding this change did not introduce (unchanged context, or relocated code identical to its merge-base original) is real but was not shipped here. Present it with its verify-mode verdict like any other finding, but label it plainly as pre-existing and not introduced by this change, so it is never treated as a fix the author must make to merge this change: flagging already-shipped code as a blocker picks a fight over a decision that is not under review. Carry each finding's PR-introduced or pre-existing label from step 5 into the presentation, and when attribution is uncertain, treat the finding as pre-existing.
