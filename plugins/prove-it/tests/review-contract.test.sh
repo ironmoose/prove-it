@@ -19,11 +19,12 @@ fail() { echo "FAIL: $1"; FAIL_COUNT=$((FAIL_COUNT + 1)); }
 # The gate section: from its heading to the next heading of any level.
 GATE_SECTION="$(awk '
   /^### Lane relevance gate/ { on = 1; next }
-  on && /^#{1,6} / { exit }
+  on && /^#+ / { exit }
   on { print }
 ' "$REVIEW")"
 
-for phrase in "all ten" "10 reviewers" "ten lanes" "ten reviewers"; do
+for phrase in "all ten" "10 reviewers" "ten lanes" "ten reviewers" \
+  "until every chunk of every lane" "Paste the diff, the clipped"; do
   if grep -qiF -- "$phrase" "$REVIEW"; then
     fail "absent phrase still present: '$phrase'"
   else
@@ -37,7 +38,19 @@ for phrase in \
   "Fail open" \
   "--lanes" \
   "forced on" \
-  "forced off"; do
+  "forced off" \
+  "per slice" \
+  "slice context file" \
+  "### Coverage" \
+  "NOT COVERED" \
+  "--no-checkout" \
+  "path args" \
+  "scoped to" \
+  "every selected lane of every slice" \
+  "headRefOid" \
+  "git rev-parse HEAD" \
+  "is ignored and reported" \
+  "cannot be forced off"; do
   if grep -qF -- "$phrase" "$REVIEW"; then
     pass "present phrase: '$phrase'"
   else
@@ -55,13 +68,21 @@ check_row() {
   fi
 }
 check_row "edge-case-qa" "executable logic"
-check_row "code-smells-reviewer" "function"
+check_row "code-smells-reviewer" "non-trivial"
 check_row "test-reviewer" "test files"
 check_row "contract-reviewer" "signature"
 check_row "security-reviewer" "trust boundary"
 check_row "doc-vouching-reviewer" "justifies"
 check_row "self-containment-reviewer" "prose"
 check_row "comment-claim-verifier" "falsifiable"
+
+# The gate table has exactly eight lane rows.
+ROWS="$(printf '%s\n' "$GATE_SECTION" | grep '^| `' | wc -l | tr -d ' ')"
+if [ "$ROWS" -eq 8 ]; then
+  pass "gate table has 8 rows"
+else
+  fail "gate table has $ROWS rows, expected 8"
+fi
 
 # Always-run lanes: named on an "Always run" line, never in a gate-table row.
 ALWAYS_LINE="$(printf '%s\n' "$GATE_SECTION" | grep -F 'Always run')"
