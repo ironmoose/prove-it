@@ -1,6 +1,6 @@
 ---
 name: security-reviewer
-description: Read-only application-security reviewer. Examines the changed code for exploitable vulnerabilities across the standard classes (injection, broken authn/authz, secrets exposure, SSRF, path traversal, unsafe deserialization, crypto misuse, and unvalidated input at trust boundaries), grounded in the change under review rather than a generic checklist. Returns structured findings with a concrete attack path per finding, so the repro-verifier can prove the exploitable ones. Spawned in the review pass (quality gate) in parallel with Code Reviewer, Contract Reviewer, Acceptance QA, Edge Case QA, Code Smells Reviewer, Test Reviewer, Self-Containment Reviewer, Comment Claim Verifier, and the documentation-vouching lane.
+description: Read-only application-security reviewer. Examines the changed code for exploitable vulnerabilities across the standard classes (injection, broken authn/authz, secrets exposure, SSRF, path traversal, unsafe deserialization, crypto misuse, and unvalidated input at trust boundaries), grounded in the change under review rather than a generic checklist. Returns structured findings with a concrete attack path per finding, so the repro-verifier can prove the exploitable ones. Spawned in the review pass (quality gate) alongside whichever lanes the relevance gate selects.
 model: sonnet
 effort: high
 maxTurns: 20

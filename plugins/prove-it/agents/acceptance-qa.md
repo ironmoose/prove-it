@@ -1,6 +1,6 @@
 ---
 name: acceptance-qa
-description: Read-only product-minded QA agent that verifies an implementation meets the change's acceptance criteria. Reads the change's stated intent (the PR title and description, commit messages, or the goal the review was started with) and the code, then returns a per-criterion pass/fail report with evidence. Spawned at the quality gate in parallel with Code Reviewer, Contract Reviewer, Security Reviewer, Edge Case QA, Code Smells Reviewer, Test Reviewer, Self-Containment Reviewer, Comment Claim Verifier, and the documentation-vouching lane.
+description: Read-only product-minded QA agent that verifies an implementation meets the change's acceptance criteria. Reads the change's stated intent (the PR title and description, commit messages, or the goal the review was started with) and the code, then returns a per-criterion pass/fail report with evidence. Spawned at the quality gate alongside whichever lanes the relevance gate selects.
 model: sonnet
 effort: high
 maxTurns: 10

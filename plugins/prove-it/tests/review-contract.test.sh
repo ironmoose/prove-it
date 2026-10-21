@@ -101,6 +101,27 @@ check_in "large diffs" '^### Large diffs' 'repro bucket <name>: NOT RUN'
 check_in "large diffs" '^### Large diffs' 'renames/moves called out'
 check_in "review id" '^### Resolve the base' 'clear any existing'
 
+check_in "review id" '^### Resolve the base' 'first 8 hex characters'
+check_in "review id" '^### Resolve the base' 'strip a leading `./` and trailing `/`'
+check_in "gate section" '^### Lane relevance gate' 'judge only criteria this slice can satisfy'
+check_in "gate section" '^### Lane relevance gate' 'the full `subagent_type` is accepted too'
+check_in "large diffs" '^### Large diffs' '<step 6 scratch dir>/slice-<k>.md'
+check_in "consolidate" '^## Step 5' 'unmet only if no slice met it'
+check_in "gate step" '^## Step 7' 'non-PR target'
+check_in "result" '^## Step 8' 'Review id: {full review id}'
+check_in "hand off" '^## Step 9' 'full review id'
+
+FOLLOW="$SCRIPT_DIR/../commands/follow-up.md"
+for phrase in "only for a local review" "never read or touch the gate" \
+  "do not infer" "A PR review has no gate to record into or close" \
+  "Never run \`confirm-fix\`, \`close\`, or \`override\` on a gate whose \`target\` differs"; do
+  if grep -qiF -- "$phrase" "$FOLLOW"; then pass "follow-up: '$phrase'"; else fail "follow-up lacks '$phrase'"; fi
+done
+for f in acceptance-qa security-reviewer contract-reviewer doc-vouching-reviewer; do
+  if grep -q 'alongside whichever lanes the relevance gate selects' "$SCRIPT_DIR/../agents/$f.md"; then pass "agent $f description"; else fail "agent $f description"; fi
+done
+if grep -l 'in parallel with' "$SCRIPT_DIR"/../agents/*.md | grep -q .; then fail "stale 'in parallel with' in agents"; else pass "no stale sibling lists in agents"; fi
+
 # The gate table has exactly eight lane rows.
 ROWS="$(printf '%s\n' "$GATE_SECTION" | grep '^| `' | wc -l | tr -d ' ')"
 if [ "$ROWS" -eq 8 ]; then

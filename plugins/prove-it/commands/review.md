@@ -91,7 +91,7 @@ In every case the base SHA comes from `git merge-base origin/<base-ref> HEAD`, n
 
 Keep `-M` so a rename reads as a rename, not as a delete plus a spurious brand-new file, and tell the reviewers in their prompts which files are renames or moves.
 
-Record a stable **review id** for this target now: the PR number for a PR, otherwise the branch name, otherwise a short slug of the path or commit range. It is used in step 6 to key the durable repro directory, so it must resolve to the same value across sessions for the same target. When path args scope a PR, fold a short hash of the path scope into the id (`<pr>-<hash>`), so a scoped and a whole-PR review never share a directory. Before writing new `slice-*.md` files, clear any existing `slice-*.md` in that review dir.
+Record a stable **review id** for this target now: the PR number for a PR, otherwise the branch name, otherwise a short slug of the path or commit range. It is used in step 6 to key the durable repro directory, so it must resolve to the same value across sessions for the same target. When path args scope a PR, fold a hash of the path scope into the id (`<pr>-<hash>`), so a scoped and a whole-PR review never share a directory. Compute the hash exactly: normalize each path (strip a leading `./` and trailing `/`), deduplicate, sort, join with `\n`, take the sha1, and keep the first 8 hex characters. Before writing new `slice-*.md` files, clear any existing `slice-*.md` in the step 6 scratch dir for this review id (`~/.claude/prove-it/repros/<review-id>/`, or the path `prove-it-gate repro-dir <review-id>` prints).
 
 If the captured diff exceeds roughly 30k tokens, plan to split it into slices by file or feature area in step 4 and run parallel reviewer instances per slice, then consolidate across slices.
 
@@ -152,7 +152,7 @@ The `acceptance-qa` lane needs to know what this change was supposed to do. Gath
 
 **Fail open.** When you cannot tell whether a lane has work (an unreadable diff, a mixed change, an unfamiliar file type), spawn it. A lane runs unless you can say plainly why it has nothing to do.
 
-**`--lanes` overrides the gate.** `--lanes +security,-test` is a comma-separated list; `+<lane>` is forced on and `-<lane>` is forced off, whatever the gate decided. Use the short names `code-reviewer, code-smells, edge-case, test, contract, security, acceptance, doc-vouching, self-containment, comment-claim`. An unrecognised name is ignored and reported (one line in the step 8 result naming it). Label each forced lane `forced on` or `forced off` in the step 8 result. Forcing off an always-run review lane is allowed here but must be said plainly. `-repro-verifier` is refused with a one-line note: `repro-verifier` cannot be forced off.
+**`--lanes` overrides the gate.** `--lanes +security,-test` is a comma-separated list; `+<lane>` is forced on and `-<lane>` is forced off, whatever the gate decided. Use the short names `code-reviewer, code-smells, edge-case, test, contract, security, acceptance, doc-vouching, self-containment, comment-claim`; the full `subagent_type` is accepted too (`prove-it:test-reviewer` or `test-reviewer`). An unrecognised name is ignored and reported (one line in the step 8 result naming it). Label each forced lane `forced on` or `forced off` in the step 8 result. Forcing off an always-run review lane is allowed here but must be said plainly. `-repro-verifier` is refused (in either form, `-prove-it:repro-verifier` included) with a one-line note: `repro-verifier` cannot be forced off.
 
 On a split diff, forced overrides apply to every slice. A lane counts as run in `Lanes:` only if it returned a real result on at least one slice; it counts as skipped only if skipped on every slice; a lane that is NOT COVERED on every slice it was selected for is reported NOT COVERED, not run.
 
@@ -165,7 +165,7 @@ Dispatch the selected reviewers (the always-run lanes plus every gated lane that
 - The full captured diff, with renames/moves called out. On a split large diff, inline only the slice's file list and name the slice context file as the reviewer's complete context instead (see Large diffs below).
 - The complete current bodies of any functions the diff shows only partially through context-truncation, and the bodies of the callers of changed functions, so a reviewer never has to guess at code the diff clipped. (On a split diff these live in the slice context file.)
 - For the six language-sensitive reviewers (`code-reviewer`, `code-smells-reviewer`, `test-reviewer`, `edge-case-qa`, `contract-reviewer`, `security-reviewer`): the conventions overlay path(s) from step 2, plus the target repo `CLAUDE.md`, plus the precedence rule. (On a split diff these also live in the slice context file.)
-- For `acceptance-qa`: the stated (or inferred, so-labeled) intent from step 3. When the review is scoped to <paths>, say so and tell it to judge only the criteria the scoped files can satisfy, marking the rest "out of scope for this scoped review", not unmet.
+- For `acceptance-qa`: the stated (or inferred, so-labeled) intent from step 3. When the review is scoped to <paths>, say so and tell it to judge only the criteria the scoped files can satisfy, marking the rest "out of scope for this scoped review", not unmet. On a split diff, give each slice's `acceptance-qa` the instruction "judge only criteria this slice can satisfy; mark the rest out of scope for this slice".
 - `REPO_PATH`: the absolute path to the target repo. Reviewers may read additional files for surrounding context, but the diff is inlined so they do not have to reconstruct it.
 
 Each reviewer returns structured findings: `file:line`, severity, description, suggested fix. Wait for every dispatched reviewer to return a real result (see the completion barrier in the Spawn contract above) before moving on.
@@ -175,7 +175,7 @@ Each reviewer returns structured findings: `file:line`, severity, description, s
 When the captured diff is past the ~30k-token split threshold from step 1, these patterns keep a big-PR review tractable. Use them, and say you did.
 
 - **Triage per slice.** Cut the diff into slices by feature area. Run the lane relevance gate per slice, on that slice's own diff: a slice with no tests does not spawn `test-reviewer`, and a docs slice does not spawn `edge-case-qa`. The always-run lanes run on every slice.
-- **One slice context file per slice.** Write each slice's diff (with its renames/moves called out, as step 4 requires for an inlined diff), the clipped function and caller bodies, and the conventions (overlay text, target repo `CLAUDE.md`, precedence rule) to `<durable scratch>/<review-id>/slice-<k>.md`, using the durable scratch location step 6 resolves (resolve it now if step 6 has not yet). Each lane prompt for that slice names its slice context file as its complete context ("this is your complete context, do not re-diff the repo") and inlines only the slice's file list, `REPO_PATH`, and any lane-specific input such as the stated intent. This keeps each pod's context small and is the main thing that stops a reviewer from spending its turn budget re-reading the tree, reinforcing the Tool budget contract in each reviewer def.
+- **One slice context file per slice.** Write each slice's diff (with its renames/moves called out, as step 4 requires for an inlined diff), the clipped function and caller bodies, and the conventions (overlay text, target repo `CLAUDE.md`, precedence rule) to `<step 6 scratch dir>/slice-<k>.md`, using the durable scratch dir step 6 resolves (resolve it now if step 6 has not yet). Each lane prompt for that slice names its slice context file as its complete context ("this is your complete context, do not re-diff the repo") and inlines only the slice's file list, `REPO_PATH`, and any lane-specific input such as the stated intent. This keeps each pod's context small and is the main thing that stops a reviewer from spending its turn budget re-reading the tree, reinforcing the Tool budget contract in each reviewer def.
 - **Account for coverage.** The Spawn contract's NOT COVERED rule applies per slice and lane. Never drop a failed slice-lane silently; step 8 reports it.
 - **Backfill the concurrency cap.** Subagent concurrency is capped (for example `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=20`). Do not fire all N pods at once and assume they run together: launch up to the cap, then backfill the next pod as each slot frees, until every selected lane of every slice has actually run. A pod you believe ran but that never got a slot is a lane that never ran: that slice-lane is NOT COVERED.
 - **Split the repro-verifier into parallel buckets.** In verify mode, group the defect-claims by what they need to run: claims a no-dependency unit repro can settle, versus claims that need a real service (a database via testcontainers, say). Run the buckets concurrently so the slow service-backed repros do not serialize behind the cheap ones. A bucket that fails to run is reported in Coverage as `repro bucket <name>: NOT RUN`, and its claims stay INCONCLUSIVE (KEEP), never dropped.
@@ -184,6 +184,7 @@ When the captured diff is past the ~30k-token split threshold from step 1, these
 
 Consolidate every reviewer's findings:
 
+- **Merge `acceptance-qa` across slices per criterion.** A criterion is unmet only if no slice met it and at least one slice judged it; a criterion every slice marked out of scope is reported out of scope.
 - **Deduplicate by `file:line`.** When two reviewers flag the same location, keep the one with the higher severity and merge the descriptions.
 - **Split the set in two.** The **defect-claims** are the correctness and edge-case findings: anything asserting the code does the wrong thing, mishandles a boundary, or breaks a contract. These go to the repro-verifier in step 6. The **nits** are the low-severity findings (style, naming, minor design smells) that are not claims of incorrect behavior; these are not repro-verified and are presented as-is at the end.
 
@@ -216,7 +217,7 @@ Spawn `prove-it:repro-verifier` with the defect-claims, the captured diff, `REPO
 
 **PR targets never open the gate.** When the target is a PR (with or without `--no-checkout` or path args), never run `prove-it-gate open`, `verify`, or `close`: the gate is one machine-wide slot for the author's own fix cycle, and a review of someone else's PR must not lock it or block edits to the PR's files. Skip the rest of this step, keep the durable repro dir from step 6, and say "Gate: not opened (PR review is advisory)" in the step 8 result. The verdicts still drive step 8 unchanged.
 
-Only when the target is the local working diff (or a path or commit range in the user's own checkout): if `command -v prove-it-gate` found it in step 6, open the gate against the defect-claims so its `PreToolUse` hook blocks edits to the affected files until each finding is resolved:
+Only for a non-PR target (a local working diff, or a path or commit range in the user's own checkout), which opens the gate: if `command -v prove-it-gate` found it in step 6, open the gate against the defect-claims so its `PreToolUse` hook blocks edits to the affected files until each finding is resolved:
 
 ```
 prove-it-gate open --target "<review target>" --finding "<id>:<file>:<summary>" [--finding "<id>:<file>:<summary>" ...]
@@ -240,6 +241,7 @@ Lead with the lanes, then the count that matters, before the buckets:
 
 > Lanes: {N} run / {M} skipped
 > repro-verifier: ran
+> Review id: {full review id}
 
 N and M count review lanes only. Under the `Lanes:` line list each skipped lane with its one-line reason from the step 4 gate, and mark any `--lanes` override as `forced on` or `forced off`. `repro-verifier` is never gated, so it is reported on its own line and not counted in N or M. On a split diff, `Lanes:` counts distinct review lanes that ran on at least one slice, and the Coverage section below carries the per-slice detail. If a PR path scope applied, say "scoped to <paths>" right under these lines. If any slice/lane is `NOT COVERED`, the headline carries the token `NOT COVERED` with the count. Then the headline:
 
@@ -281,7 +283,7 @@ This governs formatting only, not content: the self-containment bar below still 
 
 ## Step 9: Hand off
 
-Tell the user the next step: fix the MUST-FIX findings (and any KEEP findings they judge real), then run `/prove-it:follow-up` to confirm each fix against its own repro and promote the repros into permanent regression tests. Note whether the gate is enforcing (local diff, installed and open) or advisory-only (a PR review is always advisory: "Gate: not opened (PR review is advisory)"). If you checked out a PR branch or changed the working branch in step 1, restore the original branch before finishing (with `--no-checkout` nothing was checked out, so there is nothing to restore).
+Tell the user the full review id (for a scoped PR review the `<pr>-<hash>` form, which `/prove-it:follow-up` needs) and the next step: fix the MUST-FIX findings (and any KEEP findings they judge real), then run `/prove-it:follow-up` to confirm each fix against its own repro and promote the repros into permanent regression tests. Note whether the gate is enforcing (local diff, installed and open) or advisory-only (a PR review is always advisory: "Gate: not opened (PR review is advisory)"). If you checked out a PR branch or changed the working branch in step 1, restore the original branch before finishing (with `--no-checkout` nothing was checked out, so there is nothing to restore).
 
 ---
 

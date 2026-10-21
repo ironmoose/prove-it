@@ -24,10 +24,11 @@ The discipline that matters most here: **a fix is not confirmed because the repo
 
 Recover the Confirmed findings from the review that opened this cycle, and each one's repro script path.
 
-- **Resolve the review id.** Use the argument if given (the PR number, branch name, or path slug the review used). Otherwise infer it the same way `/prove-it:review` did: the current branch, or the PR checked out.
+- **Resolve the review id.** Use the argument if given (the PR number, branch name, or path slug the review used). If the PR was reviewed with path args, take the full `<pr>-<hash>` id from the review result or hand-off, or ask the user for it; do not infer `<pr>`. Otherwise infer it the same way `/prove-it:review` did: the current branch.
 - **Detect `prove-it-gate` once** with `command -v prove-it-gate`, and carry the result through steps 2 and 4.
-- **If the gate is installed:** `prove-it-gate status` lists the open gate's findings with their verdicts and each Confirmed finding's recorded `repro_path`. That is the authoritative source of what is Confirmed and where its repro lives.
-- **If the gate is not installed:** the repro scripts are in the durable scratch dir the review used, `~/.claude/prove-it/repros/<review-id>/`. Recover the Confirmed findings and their repro paths from there and from the review result the user is following up on.
+- **Use the gate only for a local review.** If the gate is installed, run `prove-it-gate status` and use it only when its `target` matches this review id. Then it lists the open gate's findings with their verdicts and each Confirmed finding's recorded `repro_path`, and is the authoritative source of what is Confirmed and where its repro lives.
+- **For a PR review id, never read or touch the gate** (a PR review never opens one, and any open gate belongs to another target). Recover the findings from the durable dir and the review result, as below.
+- **If the gate is not installed, or its target does not match:** the repro scripts are in the durable scratch dir the review used, `~/.claude/prove-it/repros/<review-id>/`. Recover the Confirmed findings and their repro paths from there and from the review result the user is following up on.
 
 Only findings marked CONFIRMED in verify mode are in scope. PROVEN-SAFE findings were dropped and have no fix to confirm; INCONCLUSIVE findings were never settled and were not sent for a fix. Bring only the Confirmed set forward.
 
@@ -99,7 +100,9 @@ Present the per-finding promote/decline decisions and verification results to th
 
 ## Step 4: Record and close the gate (if installed)
 
-If `prove-it-gate` was detected in step 1 and a gate is open:
+A PR review has no gate to record into or close: skip this step for a PR review id and say so. Never run `confirm-fix`, `close`, or `override` on a gate whose `target` differs from this review id.
+
+If `prove-it-gate` was detected in step 1 and a gate is open whose `target` matches this review id:
 
 - For every finding whose repro PASSED against the fixed code in step 2, record it:
   ```

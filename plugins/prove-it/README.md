@@ -26,7 +26,7 @@ prove-it runs as a loop, not a one-shot report:
 
 ## What's new in 1.1.0
 
-Reviews now start only the lanes the diff needs and report which were skipped and why. `--lanes +x,-y` forces lanes on or off (the repro-verifier always runs). Large diffs are reviewed in slices, with a Coverage section that marks anything unreviewed NOT COVERED. A PR target accepts path arguments to scope the review, and `--no-checkout` reviews a PR that is already checked out at its head (for example in a worktree) without switching branches.
+Reviews now start only the lanes the diff needs and report which were skipped and why. `--lanes +x,-y` forces lanes on or off (the repro-verifier always runs). Large diffs are reviewed in slices, with a Coverage section that marks anything unreviewed NOT COVERED. A PR target accepts path arguments to scope the review, and `--no-checkout` reviews a PR that is already checked out at its head (for example in a worktree) without switching branches. A scoped PR review prints its full review id (`<pr>-<hash>`) for the follow-up, and follow-up uses the gate only when its target matches the review, never for a PR review.
 
 ## Install
 
