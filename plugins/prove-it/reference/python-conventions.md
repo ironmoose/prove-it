@@ -1,6 +1,6 @@
 # Python conventions overlay
 
-Language baseline for Python work. The orchestrator injects this file into the prompts of language-sensitive agents (implementer, test-writer, code-reviewer, code-smells-reviewer, test-reviewer, edge-case-qa) when the changed files are `.py`. It carries only rules that are true of the *language*. Anything true of a particular repo, service, or deployment belongs in that repo's own `CLAUDE.md`.
+Language baseline for Python work. The orchestrator injects this file into the prompts of language-sensitive agents (test-writer, code-reviewer, code-smells-reviewer, test-reviewer, edge-case-qa, contract-reviewer, security-reviewer) when the changed files are `.py`. It carries only rules that are true of the *language*. Anything true of a particular repo, service, or deployment belongs in that repo's own `CLAUDE.md`.
 
 ---
 

@@ -37,7 +37,7 @@ Reviews now start only the lanes the diff needs and report which were skipped an
 
 ## Conventions overlays
 
-prove-it ships baseline TypeScript and Python conventions overlays that its reviewer agents read before judging a change, plus a setup step to customize them for your own project's standards. If the `adze-bonch` plugin is also installed, prove-it can read its overlays too, so the two plugins share one set of conventions instead of drifting apart.
+prove-it ships baseline TypeScript, Python, and Lua conventions overlays that its reviewer agents read before judging a change, plus a setup step to customize them for your own project's standards. It is the one home for these overlays; adze-bonch no longer keeps its own copies.
 
 ## Why a green test suite is not proof
 

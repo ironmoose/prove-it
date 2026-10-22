@@ -1,6 +1,6 @@
 # TypeScript conventions overlay
 
-Language baseline for TypeScript work. The orchestrator injects this file into the prompts of language-sensitive agents (implementer, test-writer, code-reviewer, code-smells-reviewer, test-reviewer, edge-case-qa) when the changed files are `.ts` / `.tsx`. It carries only rules that are true of the *language*. Anything true of a particular repo, stack, or framework belongs in that repo's own `CLAUDE.md`.
+Language baseline for TypeScript work. The orchestrator injects this file into the prompts of language-sensitive agents (test-writer, code-reviewer, code-smells-reviewer, test-reviewer, edge-case-qa, contract-reviewer, security-reviewer) when the changed files are `.ts` / `.tsx`. It carries only rules that are true of the *language*. Anything true of a particular repo, stack, or framework belongs in that repo's own `CLAUDE.md`.
 
 ---
 
