@@ -63,3 +63,7 @@ The honest caveat: prove-it was scoped to the security core here, and the full-d
 - [The quality gate](plugins/prove-it/gate/README.md): the edit-blocking hook and the open, verify, confirm-fix, close cycle
 - [Reviewer agents](plugins/prove-it/agents): the specialized reviewer and verifier sub-agents
 - [Conventions overlays](plugins/prove-it/reference): the baseline TypeScript and Python style overlays
+
+## Related
+
+- [Review Grid](https://github.com/ironmoose/reviewgrid): a small desktop inbox (Python, PySide6) that shows a local JSON queue of pull requests waiting on review as cards. It reads the queue only; the producer that fills it is not included.
